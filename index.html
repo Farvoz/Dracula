@@ -7,6 +7,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="Deckula!" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icon-192.png" />
 <title>Deckula!</title>
 <style>
   :root{
@@ -158,10 +161,10 @@
     <div class="subtitle">Соло-прототип · v1.2.2</div>
     <div class="diff-label">Выберите сложность</div>
 
-    <div class="cards-toggle" id="cards-toggle">Набор карт: простые (9) ▾</div>
+    <div class="cards-toggle" id="cards-toggle">Набор карт: по умолчанию (30) ▾</div>
     <div id="cards-panel" style="display:none;">
       <div class="cards-quick">
-        <button class="mini-btn" id="cards-simple">Только простые</button>
+        <button class="mini-btn" id="cards-simple">По умолчанию</button>
         <button class="mini-btn" id="cards-all">Все</button>
         <button class="mini-btn" id="cards-none">Очистить</button>
       </div>
@@ -243,7 +246,7 @@
 
   let game = null;
   let allowedIds = null;
-  const SIMPLE_SET = [9, 19, 20, 21, 23, 28, 39, 46, 10];
+  const DEFAULT_SET = [4,7,8,9,10,11,15,17,18,19,20,22,23,25,26,27,28,30,32,33,39,41,42,43,44,46,47,48,49,50];
   const ui = { difficulty:'easy', seed:0, openings:null, currentCard:null, logOpen:false, endShown:false, peekOrder:null, shuffleSel:null, lastPending:null, deckTotal:0, discardView:false };
   const LS_KEY = 'deckula.allowedIds';
   function loadAllowedIds(){
@@ -301,7 +304,7 @@
     CARDS.forEach(def=>{
       const row=document.createElement('div'); row.className='cards-row';
       const cb=document.createElement('input'); cb.type='checkbox'; cb.id='card-'+def.id;
-      cb.checked = saved ? (saved.indexOf(def.id) !== -1) : (SIMPLE_SET.indexOf(def.id) !== -1);
+      cb.checked = saved ? (saved.indexOf(def.id) !== -1) : (DEFAULT_SET.indexOf(def.id) !== -1);
       const lab=document.createElement('label'); lab.setAttribute('for','card-'+def.id); lab.textContent=def.id+'. '+def.name;
       const info=document.createElement('span'); info.className='cinfo'; info.textContent=shortInfo(def);
       cb.onchange=()=>{ updateCardsLabel(); saveAllowedIds(); };
@@ -322,7 +325,7 @@
   function updateCardsLabel(){
     const n = getAllowedIds().length;
     const t=$('#cards-toggle');
-    if(n === SIMPLE_SET.length && SIMPLE_SET.every(id=>{ const cb=document.getElementById('card-'+id); return cb && cb.checked; })) t.textContent='Набор карт: простые ('+n+') ▾';
+    if(n === DEFAULT_SET.length && DEFAULT_SET.every(id=>{ const cb=document.getElementById('card-'+id); return cb && cb.checked; })) t.textContent='Набор карт: по умолчанию ('+n+') ▾';
     else t.textContent='Набор карт: '+n+' выбрано ▾';
   }
   function renderFull(inst){
@@ -734,7 +737,7 @@
   // ---- wire up ----
   buildCardPicker();
   $('#cards-toggle').onclick=()=>{ const p=$('#cards-panel'); p.style.display = (p.style.display==='none'?'block':'none'); };
-  $('#cards-simple').onclick=()=>{ setAllChecked(false); SIMPLE_SET.forEach(id=>{ const cb=document.getElementById('card-'+id); if(cb) cb.checked=true; }); updateCardsLabel(); };
+  $('#cards-simple').onclick=()=>{ setAllChecked(false); DEFAULT_SET.forEach(id=>{ const cb=document.getElementById('card-'+id); if(cb) cb.checked=true; }); updateCardsLabel(); };
   $('#cards-all').onclick=()=>setAllChecked(true);
   $('#cards-none').onclick=()=>setAllChecked(false);
   document.querySelectorAll('[data-diff]').forEach(b=> b.onclick=()=>startPrep(b.dataset.diff, getAllowedIds()));
