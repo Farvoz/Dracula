@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Deckula!</title>
+<style>
+  :root{
+    --bg:#14110f; --panel:#1d1916; --panel2:#241f1b; --line:#3a342c;
+    --txt:#e8e2d6; --muted:#8a8276; --beige:#d8c9a8; --warn:#c9a14a; --seal:#e0483a;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;}
+  body{
+    background:var(--bg); color:var(--txt);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16px; line-height:1.4; -webkit-user-select:none; user-select:none;
+  }
+  #app{max-width:480px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;}
+  .screen{display:none;flex-direction:column;flex:1;min-height:100vh;}
+  .screen.active{display:flex;}
+
+  /* Buttons */
+  .btn{
+    display:block;width:100%;padding:15px 14px;margin:7px 0;
+    background:var(--panel);color:var(--txt);border:1px solid var(--line);
+    border-radius:11px;font-size:18px;font-weight:600;text-align:center;cursor:pointer;
+    min-height:48px;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn.primary{background:var(--beige);color:#1a1714;border-color:var(--beige);}
+  .btn.ghost{background:transparent;}
+
+  /* Start */
+  #screen-start{justify-content:center;align-items:stretch;padding:18px;}
+  .cover{width:100%;max-height:38vh;object-fit:cover;border-radius:14px;border:1px solid var(--line);background:#000;}
+  .title{font-size:34px;font-weight:800;letter-spacing:1px;text-align:center;margin:14px 0 4px;color:var(--beige);}
+  .subtitle{text-align:center;color:var(--muted);margin-bottom:18px;}
+  .diff-label{text-align:center;color:var(--muted);font-size:14px;margin:4px 0;}
+  .cards-toggle{text-align:center;color:var(--beige);font-size:14px;font-weight:600;cursor:pointer;padding:6px 0;user-select:none;}
+  #cards-panel{max-height:42vh;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:8px;margin:6px 0;}
+  .cards-quick{display:flex;gap:6px;margin-bottom:8px;}
+  .mini-btn{flex:1;min-height:36px;margin:0;font-size:13px;padding:6px;background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:9px;cursor:pointer;}
+  .mini-btn:active{transform:translateY(1px);}
+  .cards-row{display:flex;align-items:center;gap:8px;padding:4px 2px;border-bottom:1px solid #2a2520;}
+  .cards-row input{width:18px;height:18px;flex:0 0 auto;accent-color:var(--beige);}
+  .cards-row label{font-size:13px;flex:1;cursor:pointer;}
+  .cards-row .cinfo{font-size:11px;color:var(--muted);white-space:nowrap;}
+
+  /* Game */
+  #screen-game{padding:0 12px 12px;}
+  .gauge{width:26px;height:26px;border-radius:50%;background:conic-gradient(var(--beige) 100%,#2a2520 0);position:relative;display:block;flex:0 0 auto;}
+  .gauge::after{content:"";position:absolute;inset:5px;border-radius:50%;background:var(--panel);}
+  .statusbar{display:flex;align-items:center;gap:12px;padding:10px 4px;border-top:1px solid var(--line);margin:8px 0;}
+  .status-energy{font-size:18px;font-weight:700;color:var(--beige);flex:0 0 auto;}
+  .status-deck{display:flex;align-items:center;gap:6px;flex:0 0 auto;}
+  .status-deck .k{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;}
+  #actions{display:flex;gap:8px;flex:1;justify-content:flex-end;}
+  #actions .btn{width:auto;margin:0;flex:1;min-height:48px;}
+  .last-action{font-size:13px;color:var(--muted);min-height:16px;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+  .zone-warn{display:inline-block;color:var(--warn);font-size:12px;font-weight:700;margin:4px 2px 0;}
+  .strip-label{font-size:12px;color:var(--muted);margin:8px 2px 2px;text-transform:uppercase;letter-spacing:.5px;}
+  .strip{display:flex;gap:8px;overflow-x:auto;padding:6px 2px;border-radius:10px;border:1px solid var(--line);background:var(--panel);min-height:96px;}
+  .strip.warn{border-color:var(--warn);box-shadow:0 0 0 1px var(--warn) inset;background:#241c10;}
+  .strip-empty{color:var(--muted);font-size:13px;padding:10px;align-self:center;}
+  .mini{flex:0 0 auto;width:84px;background:var(--panel2);border:1px solid var(--line);border-radius:9px;overflow:hidden;position:relative;}
+  .mini.face-down .m-name{color:var(--muted);}
+  .mini .under-badge{position:absolute;top:3px;right:3px;background:var(--beige);color:#1d1916;font-size:11px;font-weight:700;border-radius:10px;padding:1px 6px;line-height:1.4;pointer-events:none;}
+  .mini .card-img{height:74px;}
+  .mini .m-name{font-size:11px;padding:4px 5px;line-height:1.15;color:var(--txt);}
+  .mini.target{border-color:var(--warn);box-shadow:0 0 0 2px var(--warn) inset;cursor:pointer;}
+  .mini.selected{border-color:var(--beige);box-shadow:0 0 0 3px var(--beige) inset;background:rgba(200,185,150,0.18);}
+  .mini.armed{border-color:var(--beige);box-shadow:0 0 0 3px var(--beige) inset;cursor:pointer;}
+  .ov-info{font-size:14px;opacity:0.8;margin-bottom:10px;text-align:center;}
+  .ov-visitors{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:8px 0;max-height:46vh;overflow:auto;}
+  .ov-visitors .mini{width:80px;}
+  .btn:disabled{opacity:0.4;cursor:default;}
+
+  .current-wrap{margin:10px 0;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:13px;overflow:hidden;animation:pop .22s ease;}
+  @keyframes pop{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+  .card-img{width:100%;height:34vh;max-height:300px;object-fit:cover;object-position:top;display:block;background:#000;}
+  .card-img.phase-img{display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#2a241f,#1d1916);color:var(--beige);font-weight:800;font-size:20px;letter-spacing:2px;text-transform:uppercase;}
+  .card-meta{padding:12px 13px 14px;}
+  .card-head{display:flex;align-items:center;gap:10px;margin-bottom:6px;}
+  .card-title{font-size:19px;font-weight:700;color:var(--beige);flex:1;min-width:0;}
+  .card-badges{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:flex-end;}
+  .card-vp{font-size:15px;color:var(--beige);white-space:nowrap;}
+  .chip{border:1px solid var(--line);border-radius:14px;padding:2px 11px;font-size:15px;background:var(--bg);cursor:pointer;color:var(--txt);}
+  .chip.seal{color:var(--seal);border-color:var(--seal);background:transparent;border-radius:50%;width:32px;height:32px;padding:0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;}
+  .card-eff{font-size:14px;color:#cfc7b8;line-height:1.38;margin-top:4px;}
+  .empty-ph{display:flex;align-items:center;justify-content:center;height:34vh;background:#0d0b0a;color:var(--muted);font-size:18px;}
+
+  .placeholder{color:var(--muted);text-align:center;padding:30px 0;}
+
+  #actions{padding:6px 0 0;}
+  .bottombar{display:flex;align-items:center;gap:12px;padding:8px 4px;border-top:1px solid var(--line);margin-top:auto;}
+  .bottombar .btn.ghost{flex:1;min-height:48px;margin:0;}
+  .game-top{display:flex;align-items:center;gap:8px;padding:8px 4px;border-bottom:1px solid var(--line);cursor:pointer;}
+  .log-cue{font-size:12px;color:var(--muted);white-space:nowrap;}
+
+  /* Overlay */
+  #overlay{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px;z-index:20;}
+  #overlay.hidden{display:none;}
+  #detail-overlay{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:16px;z-index:20;}
+  #detail-overlay.hidden{display:none;}
+  .nested-label{font-size:13px;color:var(--muted);margin:10px 2px 2px;text-transform:uppercase;letter-spacing:.5px;}
+  .nested{display:flex;gap:6px;overflow-x:auto;}
+  .nested .mini{width:64px;}
+  .nested .mini .card-img{height:56px;}
+  .ov-card{background:var(--panel);border:1px solid var(--beige);border-radius:14px;padding:16px;width:100%;max-width:440px;max-height:82vh;overflow:auto;}
+  .ov-label{font-size:17px;font-weight:700;margin-bottom:10px;color:var(--beige);text-align:center;}
+  .ov-options .btn{margin:6px 0;}
+  .peek-row{display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--line);}
+  .peek-row span{flex:1;font-size:14px;}
+  .peek-row button{width:40px;min-height:40px;padding:0;margin:0;font-size:16px;}
+
+  /* Log sheet */
+  #log-panel{position:fixed;left:0;right:0;top:0;max-height:55vh;background:var(--panel);border-bottom:1px solid var(--beige);padding:14px 16px 22px;overflow:auto;transform:translateY(-100%);transition:transform .25s ease;z-index:15;}
+  #log-panel.open{transform:none;}
+  #log-panel h3{margin:0 0 8px;color:var(--beige);font-size:16px;}
+  .log-line{font-size:13px;color:#cfc7b8;padding:3px 0;border-bottom:1px solid #2a2520;}
+  #log-close{margin-top:12px;}
+
+  /* End */
+  #screen-end{justify-content:center;align-items:center;padding:24px;text-align:center;}
+  #end-result{font-size:38px;font-weight:800;color:var(--beige);}
+  #end-score{font-size:22px;margin:12px 0 4px;}
+  #end-note{color:var(--muted);margin-bottom:18px;}
+
+  /* Victory breakdown */
+  #end-breakdown{display:none;width:100%;max-width:420px;margin:6px 0 18px;}
+  .bd-label{font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:6px 2px 8px;text-align:left;}
+  .bd-list{display:flex;flex-direction:column;gap:6px;}
+  .bd-row{display:flex;align-items:center;gap:10px;padding:6px 8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;}
+  .bd-img{width:46px;height:38px;flex:0 0 auto;object-fit:cover;object-position:top;background:#000;border-radius:6px;}
+  .bd-name{flex:1;font-size:14px;text-align:left;color:var(--txt);min-width:0;}
+  .bd-pts{font-size:16px;font-weight:700;color:var(--beige);white-space:nowrap;}
+  .bd-pts.neg{color:var(--seal);}
+
+  /* Toast */
+  #toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);background:var(--beige);color:#1a1714;padding:8px 16px;border-radius:22px;font-size:14px;font-weight:600;opacity:0;transition:all .2s ease;z-index:30;pointer-events:none;}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- START -->
+  <section id="screen-start" class="screen active">
+    <img class="cover" src="cards/cover.jpg" alt="Deckula!" onerror="this.style.display='none'"/>
+    <div class="title">Deckula!</div>
+    <div class="subtitle">Соло-прототип · v1.2.2</div>
+    <div class="diff-label">Выберите сложность</div>
+
+    <div class="cards-toggle" id="cards-toggle">Набор карт: простые (9) ▾</div>
+    <div id="cards-panel" style="display:none;">
+      <div class="cards-quick">
+        <button class="mini-btn" id="cards-simple">Только простые</button>
+        <button class="mini-btn" id="cards-all">Все</button>
+        <button class="mini-btn" id="cards-none">Очистить</button>
+      </div>
+      <div id="cards-list"></div>
+    </div>
+
+    <button class="btn primary" data-diff="easy">Лёгкая</button>
+    <button class="btn" data-diff="hard">Сложная</button>
+    <button class="btn" data-diff="harder">Ещё сложнее</button>
+  </section>
+
+  <!-- PREP -->
+  <section id="screen-prep" class="screen">
+    <div class="strip-label" style="margin-top:14px;">Особая подготовка — выберите 1 карту бесплатно в Дом</div>
+    <div id="prep-cards" style="display:flex;flex-direction:column;gap:10px;padding:10px 2px;"></div>
+  </section>
+
+  <!-- GAME -->
+  <section id="screen-game" class="screen">
+    <div class="game-top" id="game-top">
+      <span id="last-action" class="last-action"></span>
+      <span class="log-cue">Лог ▸</span>
+    </div>
+
+    <span id="threat-warn" class="zone-warn" style="display:none;">⚠ 3+ посетителя!</span>
+    <div class="strip" id="threat-strip"></div>
+
+    <div class="current-wrap"><div id="current"></div></div>
+
+    <div class="statusbar">
+      <div class="status-energy">⚡ <span id="hud-energy">0</span></div>
+      <div id="actions"></div>
+    </div>
+
+    <div class="strip" id="home-strip"></div>
+
+    <div class="strip-label" id="discard-label" style="display:none;">Сброс — выберите карту</div>
+    <div class="strip" id="discard-strip" style="display:none;"></div>
+
+    <div class="bottombar">
+      <div class="status-deck"><span class="gauge" id="gauge"></span><span class="k">Колода</span></div>
+      <button class="btn ghost" id="discard-toggle">Сброс (0)</button>
+    </div>
+    <div class="strip" id="discard-view" style="display:none;"></div>
+  </section>
+
+  <!-- END -->
+  <section id="screen-end" class="screen">
+    <div id="end-result">Победа!</div>
+    <div id="end-score">0</div>
+    <div id="end-note"></div>
+    <div id="end-breakdown"></div>
+    <button class="btn primary" id="again-btn">Играть снова</button>
+  </section>
+
+  <!-- OVERLAY -->
+  <div id="overlay" class="hidden"><div class="ov-card" id="overlay-card"></div></div>
+
+  <!-- DETAIL -->
+  <div id="detail-overlay" class="hidden"><div class="ov-card" id="detail-card"></div></div>
+
+  <!-- LOG -->
+  <div id="log-panel">
+    <h3>Лог действий</h3>
+    <div id="log-list"></div>
+    <button class="btn" id="log-close">Закрыть</button>
+  </div>
+
+  <div id="toast"></div>
+</div>
+
+<script src="cards.js"></script>
+<script src="engine.js"></script>
+<script>
+(function(){
+  "use strict";
+  const $ = s => document.querySelector(s);
+  const Engine = window.Engine, CARDS = window.CARDS, CARD_BY_ID = window.CARD_BY_ID;
+
+  let game = null;
+  let allowedIds = null;
+  const SIMPLE_SET = [9, 19, 20, 21, 23, 28, 39, 46, 10];
+  const ui = { difficulty:'easy', seed:0, openings:null, currentCard:null, logOpen:false, endShown:false, peekOrder:null, shuffleSel:null, lastPending:null, deckTotal:0, discardView:false };
+  const LS_KEY = 'deckula.allowedIds';
+  function loadAllowedIds(){
+    try { const raw=localStorage.getItem(LS_KEY); return raw ? JSON.parse(raw) : null; }
+    catch(e){ return null; }
+  }
+  function saveAllowedIds(){
+    try { localStorage.setItem(LS_KEY, JSON.stringify(getAllowedIds())); } catch(e){}
+  }
+
+  // ---- helpers ----
+  function imgPath(id){ return 'cards/' + id + '_card.' + ((id>=10 && id<=18) ? 'png' : 'jpg'); }
+  function inPlay(){ return game.home.concat(game.threat); }
+  function collect(){ return inPlay(); }
+  function diffSetCurrent(before){
+    const after = collect();
+    const bset = new Set(before);
+    const added = after.filter(c => !bset.has(c));
+    if(added.length) ui.currentCard = added[added.length-1];
+  }
+  // чипы типа выводятся из структурированных полей карты (без type_icons)
+  function cardChips(def){
+    const c = [];
+    if(def.visitor) c.push({sym:'V', lab:'Посетитель'});
+    if(def.placement === 'threat') c.push({sym:'⬆️', lab:'Авто в Зону Угрозы'});
+    if(def.placement === 'home') c.push({sym:'⬇️', lab:'Авто в Домашнюю зону'});
+    if(def.instant) c.push({sym:'❗', lab:'Мгновенный эффект'});
+    if(def.discardEffect) c.push({sym:'🔄', lab:'Эффект сброса (СБРОС)'});
+    if(def.vp && typeof def.vp === 'object' && def.vp.end) c.push({sym:'★', lab:'Очки (в конце игры)', cls:'seal'});
+    if(def.vp && typeof def.vp === 'object' && def.vp.scaled != null) c.push({sym:String(def.vp.scaled)+'★', lab:'ПО '+def.vp.scaled+' + связка', cls:'seal'});
+    return c;
+  }
+  function toast(msg){
+    const t=$('#toast'); t.textContent=msg; t.classList.add('show');
+    clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove('show'),1400);
+  }
+
+  // ---- выбор набора карт (стартовый экран) ----
+  function shortInfo(def){
+    let s = '';
+    if(def.visitor) s += 'V ';
+    if(def.placement === 'threat') s += '↑ ';
+    else if(def.placement === 'home') s += '↓ ';
+    else if(def.placement === 'choice') s += '• ';
+    let vp = '';
+    if(typeof def.vp === 'number'){ if(def.vp>0) vp='★'+def.vp; else if(def.vp<0) vp='−★'+(-def.vp); }
+    else if(def.vp && def.vp.scaled != null) vp=def.vp.scaled+'★';
+    else if(def.vp && def.vp.end) vp='X';
+    if(vp) s += '· '+vp;
+    return s.trim();
+  }
+  function buildCardPicker(){
+    const list = $('#cards-list'); list.innerHTML='';
+    const saved = loadAllowedIds();
+    CARDS.forEach(def=>{
+      const row=document.createElement('div'); row.className='cards-row';
+      const cb=document.createElement('input'); cb.type='checkbox'; cb.id='card-'+def.id;
+      cb.checked = saved ? (saved.indexOf(def.id) !== -1) : (SIMPLE_SET.indexOf(def.id) !== -1);
+      const lab=document.createElement('label'); lab.setAttribute('for','card-'+def.id); lab.textContent=def.id+'. '+def.name;
+      const info=document.createElement('span'); info.className='cinfo'; info.textContent=shortInfo(def);
+      cb.onchange=()=>{ updateCardsLabel(); saveAllowedIds(); };
+      row.append(cb,lab,info); list.appendChild(row);
+    });
+    updateCardsLabel();
+  }
+  function getAllowedIds(){
+    const ids=[];
+    CARDS.forEach(def=>{ const cb=document.getElementById('card-'+def.id); if(cb && cb.checked) ids.push(def.id); });
+    return ids;
+  }
+  function setAllChecked(on){
+    CARDS.forEach(def=>{ const cb=document.getElementById('card-'+def.id); if(cb) cb.checked=on; });
+    updateCardsLabel();
+    saveAllowedIds();
+  }
+  function updateCardsLabel(){
+    const n = getAllowedIds().length;
+    const t=$('#cards-toggle');
+    if(n === SIMPLE_SET.length && SIMPLE_SET.every(id=>{ const cb=document.getElementById('card-'+id); return cb && cb.checked; })) t.textContent='Набор карт: простые ('+n+') ▾';
+    else t.textContent='Набор карт: '+n+' выбрано ▾';
+  }
+  function renderFull(inst){
+    const def = inst.def;
+    const wrap = document.createElement('div'); wrap.className='card';
+    if(inst.empty){ const ph=document.createElement('div'); ph.className='empty-ph'; ph.textContent='∅ Пустая'; wrap.appendChild(ph); return wrap; }
+    const img=document.createElement('img'); img.className='card-img'; img.alt=def.name;
+    img.src=imgPath(def.id);
+    img.onerror=function(){
+      if(!img.dataset.tried){ img.dataset.tried='1'; img.src=img.src.replace(/\.(jpg|png)$/,'')+ (img.src.endsWith('jpg')?'.png':'.jpg'); }
+      else { img.style.display='none'; }
+    };
+    const meta=document.createElement('div'); meta.className='card-meta';
+    const head=document.createElement('div'); head.className='card-head';
+    const title=document.createElement('div'); title.className='card-title'; title.textContent=def.name;
+    const badges=document.createElement('div'); badges.className='card-badges';
+    if(typeof def.vp === 'number' && def.vp !== 0){
+      const vp=document.createElement('span'); vp.className='card-vp';
+      if(def.vp>0) vp.textContent = '★'.repeat(def.vp);
+      else { vp.textContent = '−' + '★'.repeat(-def.vp); vp.style.color = 'var(--seal)'; }
+      badges.appendChild(vp);
+    }
+    let chipCount=0;
+    cardChips(def).forEach(t=>{
+      const c=document.createElement('span'); c.className='chip'+(t.cls?(' '+t.cls):''); c.textContent=t.sym;
+      c.onclick=()=>toast(t.lab); badges.appendChild(c); chipCount++;
+    });
+    if(chipCount===0 && def.attachment){
+      const c=document.createElement('span'); c.className='chip'; c.textContent='◎';
+      c.onclick=()=>toast('Наложение / жетон'); badges.appendChild(c);
+    }
+    const eff=document.createElement('div'); eff.className='card-eff'; eff.textContent=def.effect;
+    head.append(title,badges);
+    meta.append(head,eff);
+    wrap.append(img,meta);
+    return wrap;
+  }
+  function renderPhaseCard(kind){
+    const wrap = document.createElement('div'); wrap.className='card';
+    const img=document.createElement('div'); img.className='card-img phase-img'; img.textContent='Начало хода';
+    const meta=document.createElement('div'); meta.className='card-meta';
+    const head=document.createElement('div'); head.className='card-head';
+    const title=document.createElement('div'); title.className='card-title'; title.textContent='Начало хода';
+    head.append(title);
+    const eff=document.createElement('div'); eff.className='card-eff';
+    eff.textContent = phaseHint(kind);
+    meta.append(head,eff);
+    wrap.append(img,meta);
+    return wrap;
+  }
+  function phaseHint(kind){
+    switch(kind){
+      case 'killVisitor': return 'Выберите посетителя в ленте Угрозы, чтобы убить.';
+      case 'banshee': return 'Выберите посетителя в ленте Угрозы, чтобы убить (Баньши).';
+      case 'returnVisitorBottom': return 'Выберите посетителя, чтобы вернуть под низ колоды.';
+      case 'payToShuffleVisitors': return 'Отметьте посетителей в ленте Угрозы и подтвердите.';
+      case 'recallDiscard': return 'Выберите карту в появившейся ленте сброса.';
+      default: return 'Тапните подсвеченную карту, чтобы разыграть её эффект, или Пропустите ход.';
+    }
+  }
+  function renderMini(inst, showUnderBadge){
+    const def=inst.def;
+    const el=document.createElement('div'); el.className='mini';
+    if(inst.empty){ const ph=document.createElement('div'); ph.className='m-name'; ph.textContent='∅ Пустая'; el.appendChild(ph); return el; }
+    const img=document.createElement('img'); img.className='card-img'; img.alt=def.name; img.src=imgPath(def.id);
+    img.onerror=function(){ if(!img.dataset.tried){ img.dataset.tried='1'; img.src=img.src.replace(/\.(jpg|png)$/,'')+(img.src.endsWith('jpg')?'.png':'.jpg'); } else img.style.display='none'; };
+    const nm=document.createElement('div'); nm.className='m-name'; nm.textContent=def.name;
+    el.append(img,nm);
+    if(showUnderBadge && inst.under && inst.under.length){
+      const b=document.createElement('span'); b.className='under-badge';
+      b.textContent='▾'+inst.under.length;
+      el.appendChild(b);
+    }
+    return el;
+  }
+  function renderFaceDown(){
+    const el=document.createElement('div'); el.className='mini face-down';
+    const img=document.createElement('img'); img.className='card-img'; img.alt='скрыто';
+    img.src='cards/cover.jpg';
+    img.onerror=function(){ img.style.display='none'; };
+    const nm=document.createElement('div'); nm.className='m-name'; nm.textContent='скрыто';
+    el.append(img,nm);
+    return el;
+  }
+
+  // ---- screens ----
+  function switchScreen(name){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    $('#screen-'+name).classList.add('active');
+  }
+
+  // ---- flow ----
+  function startPrep(diff, ids){
+    ui.difficulty=diff; ui.seed=Math.floor(Math.random()*1e9); ui.endShown=false; ui.peekOrder=null;
+    allowedIds = (ids && ids.length) ? ids : null;
+    const draft=Engine.createGame({difficulty:diff,seed:ui.seed,setupPick:0, allowedIds:allowedIds});
+    ui.openings=[draft.home[0]].concat(draft.discard);
+    const box=$('#prep-cards'); box.innerHTML='';
+    ui.openings.forEach((inst,i)=>{
+      const el=renderFull(inst);
+      el.style.cursor='pointer';
+      el.onclick=()=>prepPick(i);
+      box.appendChild(el);
+    });
+    switchScreen('prep');
+  }
+  function prepPick(i){
+    game=Engine.createGame({difficulty:ui.difficulty,seed:ui.seed,setupPick:i, allowedIds:allowedIds});
+    ui.deckTotal=game.deck.length;
+    ui.currentCard=ui.openings[i]; ui.endShown=false; ui.peekOrder=null;
+    switchScreen('game');
+    advance();
+  }
+  function stepTracked(){
+    const before=collect();
+    Engine.step(game);
+    diffSetCurrent(before);
+  }
+  function advance(){
+    if(!game) return;
+    while(game.status==='playing' && !game.pending && game.phase!=='turnStartArmed'){ stepTracked(); }
+    render();
+  }
+  function doChoose(sel){
+    if(ui.busy) return;
+    if(!game || !game.pending) return;
+    ui.busy=true;
+    try {
+      const before=collect();
+      Engine.choose(game,sel);
+      diffSetCurrent(before);
+      ui.peekOrder=null;
+      advance();
+    } finally { ui.busy=false; }
+  }
+  function doActivate(id){
+    if(ui.busy) return;
+    if(!game || !game._armedTurnStart) return;
+    ui.busy=true;
+    try {
+      const before=collect();
+      Engine.activateTurnStart(game, id);
+      diffSetCurrent(before);
+      advance();
+    } finally { ui.busy=false; }
+  }
+  function doSkipTurnStart(){
+    if(ui.busy) return;
+    if(!game) return;
+    ui.busy=true;
+    try {
+      Engine.skipTurnStart(game);
+      advance();
+    } finally { ui.busy=false; }
+  }
+
+  // ---- render ----
+  function render(){
+    if(!game) return;
+    $('#hud-energy').textContent=game.energy;
+    const pct = ui.deckTotal ? Math.round(game.deck.length/ui.deckTotal*100) : 0;
+    $('#gauge').style.background='conic-gradient(var(--beige) '+pct+'%, #2a2520 0)';
+
+    const pendingKind = game.pending ? game.pending.kind : null;
+    const threatTap = (pendingKind === 'killVisitor' || pendingKind === 'banshee' || pendingKind === 'payToShuffleVisitors' || pendingKind === 'returnVisitorBottom') ? pendingKind : null;
+    const homeTap = (pendingKind === 'returnVisitorBottom') ? 'returnVisitorBottom' : null;
+    const armedActive = (game.phase === 'turnStartArmed' && game._armedTurnStart && !game.pending);
+    const armedSet = armedActive ? new Set(game._armedTurnStart) : null;
+
+    renderStrip('#threat-strip', game.threat, threatTap, armedSet);
+    renderStrip('#home-strip', game.home, homeTap, armedSet);
+
+    const dStrip=$('#discard-strip'), dLabel=$('#discard-label');
+    if(pendingKind === 'recallDiscard'){
+      dStrip.style.display=''; dLabel.style.display='';
+      renderStrip('#discard-strip', game.discard, 'recallDiscard', null);
+    } else {
+      dStrip.style.display='none'; dLabel.style.display='none'; dStrip.innerHTML='';
+    }
+
+    const tc=Engine.threatCount(game);
+    $('#threat-strip').classList.toggle('warn', tc>=3);
+    $('#threat-warn').style.display = tc>=3 ? 'inline-block' : 'none';
+    $('#last-action').textContent = game.log.length ? game.log[game.log.length-1] : '';
+
+    $('#discard-toggle').textContent = 'Сброс ('+game.discard.length+')';
+    const dv=$('#discard-view');
+    if(ui.discardView){
+      dv.style.display='';
+      dv.innerHTML='';
+      if(!game.discard.length){ dv.innerHTML='<div class="strip-empty">— пусто —</div>'; }
+      else game.discard.forEach(inst=>{
+        const el=renderMini(inst, false);
+        el.onclick=()=>openDetail(inst);
+        dv.appendChild(el);
+      });
+    } else {
+      dv.style.display='none'; dv.innerHTML='';
+    }
+
+    const curBox=$('#current'); curBox.innerHTML='';
+    if(game.phase === 'turnStartArmed'){
+      curBox.appendChild(renderPhaseCard(pendingKind));
+    } else {
+      const cur=(pendingKind==='buyOrDiscard') ? game._pendingCard : ui.currentCard;
+      if(cur) curBox.appendChild(renderFull(cur));
+      else curBox.innerHTML='<div class="placeholder">Нет текущей карты</div>';
+    }
+
+    renderActions();
+    renderOverlay();
+    renderLog();
+
+    if(game.status!=='playing'){ if(!ui.endShown){ ui.endShown=true; showEnd(); } }
+    else if(ui.endShown){ ui.endShown=false; }
+  }
+  function renderStrip(sel,list,tappable,armed){
+    const s=$(sel); s.innerHTML='';
+    if(!list.length){ s.innerHTML='<div class="strip-empty">— пусто —</div>'; return; }
+    list.forEach(inst=>{
+      const el=renderMini(inst, true);
+      const selectable = tappable && game.pending && game.pending.kind===tappable && game.pending.options.indexOf(inst.def.id)!==-1;
+      if(selectable){
+        el.classList.add('target');
+        if(tappable==='payToShuffleVisitors'){
+          if(ui.shuffleSel && ui.shuffleSel.indexOf(inst.def.id)!==-1) el.classList.add('selected');
+          el.onclick=()=>toggleShuffleSel(inst.def.id);
+        } else {
+          el.onclick=()=>doChoose(inst.def.id);
+        }
+      } else if (armed && armed.has(inst.def.id)) {
+        el.classList.add('armed');
+        el.onclick=()=>doActivate(inst.def.id);
+      } else {
+        el.onclick=()=>openDetail(inst);
+      }
+      s.appendChild(el);
+    });
+  }
+  function toggleShuffleSel(id){
+    if(ui.shuffleSel===null) ui.shuffleSel=[];
+    const i=ui.shuffleSel.indexOf(id);
+    const budget = game._pendingBudget || 0;
+    if(i!==-1) ui.shuffleSel.splice(i,1);
+    else if(ui.shuffleSel.length < budget) ui.shuffleSel.push(id);
+    render();
+  }
+  function renderActions(){
+    const a=$('#actions'); a.innerHTML='';
+    const pk = game.pending ? game.pending.kind : null;
+    if(pk==='buyOrDiscard'){
+      const p=game.pending;
+      if(p.options.indexOf('buy')!==-1){
+        const b=document.createElement('button'); b.className='btn primary'; b.textContent='Купить ('+Engine.buyCost(game)+'⚡)';
+        b.onclick=()=>doChoose('buy'); a.appendChild(b);
+      }
+      const b2=document.createElement('button'); b2.className='btn'; b2.textContent='Сбросить (+1⚡)';
+      b2.onclick=()=>doChoose('discard'); a.appendChild(b2);
+      return;
+    }
+    if(pk==='payToShuffleVisitors'){
+      if(ui.shuffleSel===null) ui.shuffleSel=[];
+      const sel=ui.shuffleSel, budget=game._pendingBudget||0;
+      if(sel.length>0) ovOpt(a,'Подтвердить ('+sel.length+'⚡)',()=>doChoose(sel.slice()));
+      else { const b=document.createElement('button'); b.className='btn'; b.textContent='Подтвердить (выберите посетителей)'; b.disabled=true; a.appendChild(b); }
+      ovOpt(a,'Пропустить',()=>doChoose('skip'));
+      return;
+    }
+    if(pk==='takeFromUnder'){
+      ovOpt(a,'Сбросить карту',()=>doChoose('discard'));
+      ovOpt(a,'Под Ужасный экспонат',()=>doChoose('underExpo'));
+      return;
+    }
+    if(pk==='memoirChoice'){
+      ovOpt(a,'Сбросить и открыть',()=>doChoose('discardDraw'));
+      ovOpt(a,'Разыграть бесплатно (риск)',()=>doChoose('replay'));
+      return;
+    }
+    if(pk==='killVisitor'||pk==='banshee'||pk==='returnVisitorBottom'||pk==='recallDiscard'){
+      if(game.pending.options.indexOf('no')>=0) ovOpt(a,'Не активировать',()=>doChoose('no'));
+      return;
+    }
+    if(game.phase==='turnStartArmed' && !game.pending){
+      const b=document.createElement('button'); b.className='btn primary'; b.textContent='Пропустить начало хода';
+      b.onclick=doSkipTurnStart; a.appendChild(b);
+    }
+  }
+  function renderOverlay(){
+    const ov=$('#overlay'), card=$('#overlay-card');
+    const INLINE = ['buyOrDiscard','killVisitor','banshee','payToShuffleVisitors','returnVisitorBottom','recallDiscard','takeFromUnder','memoirChoice'];
+    if(!game.pending || INLINE.indexOf(game.pending.kind)!==-1){ ov.classList.add('hidden'); return; }
+    ov.classList.remove('hidden'); card.innerHTML='';
+    const p=game.pending;
+    if(ui.lastPending!==p){ ui.peekOrder=null; ui.shuffleSel=null; ui.lastPending=p; }
+    const label=document.createElement('div'); label.className='ov-label'; label.textContent=p.label||'Выберите';
+    card.appendChild(label);
+    const wrap=document.createElement('div'); wrap.className='ov-options';
+    if(p.kind==='peek') renderPeek(wrap,p);
+    else if(p.kind==='payToShuffleVisitors'){
+      if(ui.shuffleSel===null) ui.shuffleSel=[];
+      const sel=ui.shuffleSel, budget=game._pendingBudget||0;
+      const info=document.createElement('div'); info.className='ov-info';
+      info.textContent='Выбрано: '+sel.length+' из доступных (макс. '+budget+'⚡)';
+      card.appendChild(info);
+      const list=document.createElement('div'); list.className='ov-visitors';
+      p.options.forEach(id=>{
+        const inst=game.threat.find(c=>c.def.id===id);
+        const el= inst ? renderMini(inst) : document.createElement('div');
+        el.classList.add('target');
+        if(sel.indexOf(id)!==-1) el.classList.add('selected');
+        el.onclick=()=>toggleShuffleSel(id);
+        list.appendChild(el);
+      });
+      card.appendChild(list);
+      if(sel.length>0){
+        ovOpt(wrap,'Подтвердить ('+sel.length+'⚡)',()=>doChoose(sel.slice()));
+      } else {
+        const b=document.createElement('button'); b.className='btn'; b.textContent='Подтвердить (выберите посетителей)'; b.disabled=true; wrap.appendChild(b);
+      }
+      ovOpt(wrap,'Пропустить',()=>doChoose('skip'));
+    }
+    else if(p.kind==='beastFeast'){ ovOpt(wrap,'Да — убить всех и захоронить',()=>doChoose('yes')); ovOpt(wrap,'Нет',()=>doChoose('no')); }
+    else if(p.kind==='killVisitor'){ if(p.options.indexOf('no')>=0) ovOpt(wrap,'Не активировать (оставить в Доме)',()=>doChoose('no')); }
+    else if(p.kind==='banshee'){ p.options.filter(id=>id!=='no').forEach(id=>ovOpt(wrap,(CARD_BY_ID[id]?CARD_BY_ID[id].name:id),()=>doChoose(id))); ovOpt(wrap,'Не убивать',()=>doChoose('no')); }
+    else if(p.kind==='memoirChoice'){ ovOpt(wrap,'Сбросить и открыть другую',()=>doChoose('discardDraw')); ovOpt(wrap,'Разыграть бесплатно (риск)',()=>doChoose('replay')); }
+    else if(p.kind==='takeFromUnder'){ ovOpt(wrap,'Сбросить',()=>doChoose('discard')); ovOpt(wrap,'Под Ужасный экспонат',()=>doChoose('underExpo')); }
+    else if(p.kind==='shuffleBack'){ ovOpt(wrap,'Да — сбросить и заместить Дом, милый дом',()=>doChoose('yes')); ovOpt(wrap,'Нет',()=>doChoose('no')); }
+    else p.options.forEach(id=>ovOpt(wrap, (CARD_BY_ID[id]?CARD_BY_ID[id].name:('id '+id)), ()=>doChoose(id)));
+    card.appendChild(wrap);
+  }
+  function ovOpt(wrap,label,fn){ const b=document.createElement('button'); b.className='btn'; b.textContent=label; b.onclick=fn; wrap.appendChild(b); }
+  function renderPeek(wrap,p){
+    if(!ui.peekOrder) ui.peekOrder=p.options.slice();
+    ui.peekOrder.forEach((id,i)=>{
+      const row=document.createElement('div'); row.className='peek-row';
+      const nm=document.createElement('span'); nm.textContent=(i+1)+'. '+(CARD_BY_ID[id]?CARD_BY_ID[id].name:id);
+      const up=document.createElement('button'); up.textContent='▲';
+      const dn=document.createElement('button'); dn.textContent='▼';
+      up.onclick=()=>{ if(i>0){ const t=ui.peekOrder[i-1]; ui.peekOrder[i-1]=ui.peekOrder[i]; ui.peekOrder[i]=t; render(); } };
+      dn.onclick=()=>{ if(i<ui.peekOrder.length-1){ const t=ui.peekOrder[i+1]; ui.peekOrder[i+1]=ui.peekOrder[i]; ui.peekOrder[i]=t; render(); } };
+      row.append(nm,up,dn); wrap.appendChild(row);
+    });
+    const done=document.createElement('button'); done.className='btn primary'; done.textContent='Готово';
+    done.onclick=()=>doChoose(ui.peekOrder.slice()); wrap.appendChild(done);
+  }
+  function renderLog(){
+    const l=$('#log-list'); l.innerHTML='';
+    game.log.slice().reverse().forEach(m=>{ const d=document.createElement('div'); d.className='log-line'; d.textContent=m; l.appendChild(d); });
+  }
+  function showEnd(){
+    $('#overlay').classList.add('hidden');
+    $('#end-result').textContent = game.status==='won' ? 'Победа!' : 'Поражение';
+    $('#end-score').textContent = (game.status==='won') ? (game.finalScore||0) : 0;
+    const note=$('#end-note'); note.innerHTML='';
+    const bd=$('#end-breakdown'); bd.innerHTML=''; bd.style.display='none';
+    if(game.status==='won'){
+      note.textContent = 'Колода пройдена.';
+      const details = game.scoreDetails || [];
+      if(details.length){
+        bd.style.display='block';
+        const lab=document.createElement('div'); lab.className='bd-label'; lab.textContent='Очки по картам'; bd.appendChild(lab);
+        const list=document.createElement('div'); list.className='bd-list';
+        details.forEach(r=>{
+          const row=document.createElement('div'); row.className='bd-row';
+          const img=document.createElement('img'); img.className='bd-img'; img.alt=r.def.name; img.src=imgPath(r.id);
+          img.onerror=function(){ if(!img.dataset.tried){ img.dataset.tried='1'; img.src=img.src.replace(/\.(jpg|png)$/,'')+(img.src.endsWith('jpg')?'.png':'.jpg'); } else img.style.display='none'; };
+          const nm=document.createElement('span'); nm.className='bd-name'; nm.textContent=r.def.name;
+          const pts=document.createElement('span'); pts.className='bd-pts'+(r.points<0?' neg':''); pts.textContent=(r.points>0?'+':'')+r.points+'★';
+          row.append(img,nm,pts); list.appendChild(row);
+        });
+        bd.appendChild(list);
+      }
+    } else {
+      let reason = 'Дом, милый дом не выдержал.';
+      if(game.lossReason==='dom') reason = 'Зона Угрозы переполнена: 3+ посетителя одновременно.';
+      else if(game.lossReason==='memoir') reason = 'Сентиментальные мемуары: следующая карта оказалась Посетителем.';
+      const r=document.createElement('div'); r.textContent=reason; r.style.marginBottom='8px'; note.appendChild(r);
+      const cards=(game.lossCards||[]);
+      if(cards.length){
+        const l=document.createElement('div'); l.className='nested-label'; l.textContent='Из-за этих карт:'; l.style.color='var(--seal)'; note.appendChild(l);
+        const n=document.createElement('div'); n.className='nested'; n.style.marginTop='6px';
+        cards.forEach(c=>n.appendChild(renderMini(c)));
+        note.appendChild(n);
+      }
+    }
+    switchScreen('end');
+  }
+  function openDetail(inst){
+    const card=$('#detail-card'); card.innerHTML='';
+    card.appendChild(renderFull(inst));
+    if(inst.attachments && inst.attachments.length){
+      const l=document.createElement('div'); l.className='nested-label'; l.textContent='Наложения'; card.appendChild(l);
+      const n=document.createElement('div'); n.className='nested'; inst.attachments.forEach(a=>n.appendChild(renderMini(a))); card.appendChild(n);
+    }
+    if(inst.under && inst.under.length){
+      const l=document.createElement('div'); l.className='nested-label';
+      l.textContent = inst.def.hiddenUnder ? 'Под картой (скрыто, не глядя)' : 'Под картой';
+      card.appendChild(l);
+      const n=document.createElement('div'); n.className='nested';
+      if(inst.def.hiddenUnder){ inst.under.forEach(()=>n.appendChild(renderFaceDown())); }
+      else { inst.under.forEach(a=>n.appendChild(renderMini(a))); }
+      card.appendChild(n);
+    }
+    const b=document.createElement('button'); b.className='btn primary'; b.textContent='Закрыть'; b.onclick=closeDetail; card.appendChild(b);
+    $('#detail-overlay').classList.remove('hidden');
+  }
+  function closeDetail(){ $('#detail-overlay').classList.add('hidden'); }
+
+  // ---- wire up ----
+  buildCardPicker();
+  $('#cards-toggle').onclick=()=>{ const p=$('#cards-panel'); p.style.display = (p.style.display==='none'?'block':'none'); };
+  $('#cards-simple').onclick=()=>{ setAllChecked(false); SIMPLE_SET.forEach(id=>{ const cb=document.getElementById('card-'+id); if(cb) cb.checked=true; }); updateCardsLabel(); };
+  $('#cards-all').onclick=()=>setAllChecked(true);
+  $('#cards-none').onclick=()=>setAllChecked(false);
+  document.querySelectorAll('[data-diff]').forEach(b=> b.onclick=()=>startPrep(b.dataset.diff, getAllowedIds()));
+  $('#game-top').onclick=()=>{ ui.logOpen=!ui.logOpen; $('#log-panel').classList.toggle('open',ui.logOpen); };
+  $('#log-close').onclick=()=>{ ui.logOpen=false; $('#log-panel').classList.remove('open'); };
+  $('#detail-overlay').onclick=(e)=>{ if(e.target.id==='detail-overlay') closeDetail(); };
+  $('#again-btn').onclick=()=>switchScreen('start');
+  $('#discard-toggle').onclick=()=>{ ui.discardView=!ui.discardView; render(); };
+
+  switchScreen('start');
+})();
+</script>
+</body>
+</html>
