@@ -196,113 +196,66 @@
   // без запроса игрока (no downside, приносят пользу самим фактом применения).
   const AUTO_TURNSTART = new Set([42]); // Коллекционер (бесплатный заведомо полезный); 13 убрана (ручной выбор пира)
 
-  // глубокая копия изменяемых зон (def НЕ копируем; rng -> детерминированный стаб,
-  // чтобы зонд не сдвигал реальный PRNG и не влиял на будущие открытия)
-  function cloneGame(g) {
-    const c = {};
-    c.deck = g.deck.map(cloneInst);
-    c.discard = g.discard.map(cloneInst);
-    c.home = g.home.map(cloneInst);
-    c.threat = g.threat.map(cloneInst);
-    c.supply = g.supply.map(cloneInst);
-    c.log = g.log.slice();
-    c._scoreLog = (g._scoreLog || []).slice();
-    c._scoreAdd = g._scoreAdd || 0;
-    c.energy = g.energy;
-    c.setAside = (g.setAside || []).map(cloneInst);
-    c._kills = g._kills || 0;
-    c._killScore = g._killScore || 0;
-    c._portraitUsed = !!g._portraitUsed;
-    c.rng = function () { return 0; };
-    c._armedActivate = null;
-    c._resumeStack = [];
-    c.pending = null;
-    c._pendingOp = null; c._pendingSelf = null; c._pendingSource = null;
-    c._pendingCard2 = null; c._pendingBudget = null; c._pendingDiscardSrc = null;
-    c._skipVisitorEffects = false; c._freeNext = null; c._freeIfDrawn = null; c._autoPlayIfDrawn = null;
-    return c;
-  }
-  function cloneInst(inst) {
-    const c = Object.assign({}, inst);
-    c.def = inst.def;
-    c.attachments = inst.attachments.map(cloneInst);
-    c.under = inst.under.map(cloneInst);
-    c.flags = Object.assign({}, inst.flags || {});
-    return c;
+  // Авто-активация бесплатного заведомо полезного СТАРТОВОГО эффекта.
+  function runAutoRule(game, sourceId) {
+    const rule = turnStartRule(game, sourceId);
+    if (rule) runOps(game, rule.do, rule.source, undefined);
   }
 
-  // сигнатурный снимок состояния с исключением карты inst (чтобы сам сброс карты
-  // не считался «полезным» изменением)
-  function sigExcl(g, inst) {
-    const ser = z => z.filter(c => c !== inst).map(c => c.def.id);
-    return JSON.stringify({
-      e: g.energy,
-      d: ser(g.deck), di: ser(g.discard), h: ser(g.home), t: ser(g.threat), s: ser(g.supply),
-      l: g.log.length, sa: g._scoreAdd || 0,
-      u: g.home.concat(g.threat).filter(c => c !== inst).map(c => c.under.map(x => x.def.id)),
-      a: g.home.concat(g.threat).filter(c => c !== inst).map(c => c.attachments.map(x => x.def.id)),
-    });
-  }
-
-  // неразрушающе проверяет: даст ли активация СБРОС-эффекта sourceId что-то,
-  // кроме сброса самой карты. true = «живой» (полезный) эффект.
-  function probeArmed(game, sourceId) {
-    const inst = game.home.concat(game.threat).find(c => c.def.id === sourceId);
-    if (!inst) return false;
-    const clone = cloneGame(game);
-    const cloneInst = clone.home.concat(clone.threat).find(c => c.def.id === sourceId);
-    if (!cloneInst) return false;
-    clone._armedActivate = sourceId;
+  function turnStartRule(game, sourceId) {
     const all = (root.RULES || []).concat(root.GAME_RULES || []);
-    const rule = all.find(r => r.event === 'turnStart' && r.source === sourceId &&
-      findInPlay(clone, r.source) &&
-      (!r.where || matchWhere(clone, r.where, { source: r.source })));
-    if (!rule) return false;
-    runOps(clone, rule.do, rule.source, undefined);
-    clone._armedActivate = null;
-    if (clone.pending) return true; // появился выбор с реальными целями
-    const before = sigExcl(game, inst);
-    const after = sigExcl(clone, cloneInst);
-    return before !== after; // иное изменение состояния (кроме сброса самой карты)
-  }
-
-  // авто-резолв безобидных pending-выборов для AUTO_TURNSTART-эффектов
-  function autoResolveTurnStartPending(game) {
-    const k = game.pending && game.pending.kind;
-      if (k === 'banshee') {
-      const opts = game.pending.options.filter(o => o !== 'no');
-      const sel = opts.length ? opts[0] : 'no';
-      if (sel !== 'no') {
-        const v = game.threat.find(c => c.def.id === sel);
-        if (v) killOne(game, v);
-        const self = game.home.concat(game.threat).find(c => c.def.id === 4);
-        if (self) { removeFrom(game, self); game.deck.push(self); }
-        for (const vis of redirectToAbsorber(game, game.threat.filter(c => c.def.visitor).slice())) { removeFrom(game, vis); game.deck.push(vis); }
-        shuffle(game.deck, game.rng);
-      }
-      game.pending = null;
-      continueResume(game);
-      } else if (k === 'beastFeast') {
-        const self = game.home.concat(game.threat).find(c => c.def.id === game._pendingSource);
-        const all = redirectToAbsorber(game, game.threat.filter(c => c.def.visitor).slice());
-        for (const v of all) killOne(game, v, self ? self.def.id : null);
-        game._pendingSource = null; game.pending = null;
-        continueResume(game);
-    }
-  }
-
-  // активировать СБРОС-эффект sourceId автоматически (без экрана выбора)
-  function runAutoActivate(game, sourceId) {
-    const all = (root.RULES || []).concat(root.GAME_RULES || []);
-    const rule = all.find(r => r.event === 'turnStart' && r.source === sourceId &&
+    return all.find(r => r.event === 'turnStart' && r.source === sourceId &&
       findInPlay(game, r.source) &&
       (!r.where || matchWhere(game, r.where, { source: r.source })));
-    if (!rule) return;
-    game._armedActivate = sourceId;
-    const halted = runOps(game, rule.do, rule.source, undefined);
-    game._armedActivate = null;
-    if (halted && game.pending) autoResolveTurnStartPending(game);
-    else continueResume(game);
+  }
+
+  // Лёгкая проверка «живости» СБРОС-эффекта: есть ли у него осмысленная цель
+  // прямо сейчас. Заменяет прежнюю clone-пробу — не копирует игру, а смотрит на
+  // типы ops и доступные цели. Эффекты без цели авто-пропускаются (игроку не
+  // предлагается бессмысленный выбор).
+  function ruleIsLive(game, rule) {
+    for (const op of rule.do) {
+      switch (op.op) {
+        case 'killVisitor':
+        case 'banshee':
+          if (redirectToAbsorber(game, killableVisitors(game)).length === 0) return false;
+          break;
+        case 'addVisitors':
+          if (game.supply.length === 0) return false;
+          break;
+        case 'returnVisitorBottom':
+          if (redirectToAbsorber(game, inPlay(game).filter(c => c.def.visitor && !c.empty)).length === 0) return false;
+          break;
+        case 'recallDiscard':
+          if (game.discard.length === 0) return false;
+          break;
+        case 'takeFromUnder': {
+          const card = findInPlay(game, op.card);
+          if (!card || card.under.length === 0) return false;
+          break;
+        }
+        case 'payToShuffleVisitors':
+          if (redirectToAbsorber(game, game.threat.filter(c => c.def.visitor)).length === 0) return false;
+          if (game.energy < op.range[0]) return false;
+          break;
+        case 'peek':
+          if (game.deck.length === 0) return false;
+          break;
+        case 'beastFeast': {
+          const self = game.home.concat(game.threat).find(c => c.def.id === rule.source);
+          const beast = self && self.attachments.some(a => a.def.id === 40);
+          if (!beast) return false;
+          const req = (findAnywhere(game, 12) || self.under.some(x => x.def.id === 12)) ? 2 : 3;
+          if (threatCount(game) < req) return false;
+          break;
+        }
+        case 'shuffleBack':
+          if (op.discardSelf && !findInPlay(game, op.target)) return false;
+          break;
+        default: break;
+      }
+    }
+    return true;
   }
 
   // ---------- Подготовка ----------
@@ -371,6 +324,7 @@
       pending: null, seed, rng, log: [],
       pendingCard: null, _resumeStack: [], difficulty,
       _scoreLog: [],
+      _grants: [],
       _armedTurnStart: null, _armedActivate: null,
     };
     // базовые правила подготовки (GAME_RULES: старт энергии и т.п.)
@@ -849,6 +803,24 @@
         }
         return false;
       }
+      // Преданный фанат (1): переместить на последнюю карту Дома и сделать её Пустой
+      case 'moveFan': {
+        const fan = findAnywhere(game, 1);
+        if (!fan) return false;
+        if (game.home.length === 0) return false;
+        const last = game.home[game.home.length - 1];
+        if (last === undefined) return false;
+        if (last === fan) return false;
+        if (last.attachments.indexOf(fan) !== -1) return false; // уже на последней
+        for (const c of game.home.concat(game.threat)) {
+          const i = c.attachments.indexOf(fan);
+          if (i !== -1) { c.attachments.splice(i, 1); c.empty = false; }
+        }
+        removeFrom(game, fan);
+        last.attachments.push(fan);
+        last.empty = true;
+        return false;
+      }
       case 'peek': {
         const n = Math.min(op.n || 4, game.deck.length);
         const top = game.deck.slice(game.deck.length - n);
@@ -864,20 +836,20 @@
         setPending(game, 'peek', top.map(c => c.def.id), 'Посмотреть и вернуть в порядке (сверху)');
         game._pendingN = n; return true;
       }
+      // Гранты бесплатного размещения — кладутся в очередь game._grants и
+      // расходуются в placeDrawnCard. Единая очередь вместо разрозненных
+      // флагов _freeNext / _freeIfDrawn / _autoPlayIfDrawn.
       case 'freePlaceNext': {
-        // помечаем: следующая карта без стрелки -> бесплатно в home (если условие)
         if (op.when && !matchWhere(game, op.when, ctx)) return false;
-        game._freeNext = { zone: op.zone || 'home' };
+        game._grants.push({ type: 'freeNext', zone: op.zone || 'home' });
         return false;
       }
       case 'freeIfDrawn': {
-        game._freeIfDrawn = game._freeIfDrawn || [];
-        game._freeIfDrawn.push(op.id);
+        game._grants.push({ type: 'freeIfDrawn', id: op.id });
         return false;
       }
       case 'autoPlayIfDrawn': {
-        game._autoPlayIfDrawn = game._autoPlayIfDrawn || [];
-        game._autoPlayIfDrawn.push({ id: op.id, source: op.source });
+        game._grants.push({ type: 'autoPlay', id: op.id, source: op.source });
         return false;
       }
       case 'memoirChoice': {
@@ -886,38 +858,24 @@
         setPending(game, 'memoirChoice', ['discardDraw', 'replay'], 'Сентиментальные мемуары');
         game._pendingOp = op; return true;
       }
-      case 'scoreAdd': {
-        const v = op.value;
-        game._scoreAdd = (game._scoreAdd || 0) + v;
-        pushScoreLog(game, ctx.source, v);
-        return false;
-      }
-      case 'scoreIf': {
-        if (op.inPlay.every(id => findInPlay(game, id))) {
-          const v = op.value;
-          game._scoreAdd = (game._scoreAdd || 0) + v;
-          pushScoreLog(game, ctx.source, v);
+      // Единый очковый op (заменяет scoreAdd/scoreIf/scorePer/scoreUnder/scoreThreat):
+      //   mode: 'add' | 'ifInPlay' | 'perInPlay' | 'under' | 'threat'
+      case 'score': {
+        const o = op;
+        let v = 0;
+        if (o.mode === 'add') {
+          v = o.value;
+        } else if (o.mode === 'ifInPlay') {
+          v = o.ids.every(id => findInPlay(game, id)) ? o.value : 0;
+        } else if (o.mode === 'perInPlay') {
+          v = o.ids.filter(id => findInPlayInclAttach(game, id)).length * o.value;
+        } else if (o.mode === 'under') {
+          const card = findInPlay(game, o.id);
+          v = o.base + (card ? card.under.length : 0);
+        } else if (o.mode === 'threat') {
+          const n = threatCount(game);
+          v = (n === 0 ? o.empty : n * o.per);
         }
-        return false;
-      }
-      case 'scorePer': {
-        const n = op.inPlay.filter(id => findInPlayInclAttach(game, id)).length;
-        const v = n * op.value;
-        game._scoreAdd = (game._scoreAdd || 0) + v;
-        pushScoreLog(game, ctx.source, v);
-        return false;
-      }
-      case 'scoreUnder': {
-        const card = findInPlay(game, op.id);
-        const n = card ? card.under.length : 0;
-        const v = op.base + n;
-        game._scoreAdd = (game._scoreAdd || 0) + v;
-        pushScoreLog(game, ctx.source, v);
-        return false;
-      }
-      case 'scoreThreat': {
-        const n = threatCount(game);
-        const v = (n === 0 ? op.empty : n * op.per);
         game._scoreAdd = (game._scoreAdd || 0) + v;
         pushScoreLog(game, ctx.source, v);
         return false;
@@ -1262,7 +1220,7 @@
           Logger.defeat(game, 'Сентиментальные мемуары: следующая карта — Посетитель');
         } else {
           Logger.memoir(game, 'следующая карта разыграна бесплатно');
-          game._freeNext = true;
+          game._grants.push({ type: 'freeNext', zone: 'home' });
           if (card) { autoPlace(game, card); if (!game.pending) afterEnter(game); }
         }
       }
@@ -1330,16 +1288,25 @@
   function placeDrawnCard(game, card) {
     const def = card.def;
     Logger.draw(game, card);
-    // autoPlayIfDrawn: разыграть открытую карту бесплатно и немедленно (комбо, напр. 35 -> 44)
-    if (game._autoPlayIfDrawn) {
-      const ap = game._autoPlayIfDrawn.find(e => e.id === def.id);
-      if (ap && !hasArrow(def)) {
-        const srcInPlay = ap.source == null || findInPlay(game, ap.source);
-        if (srcInPlay) { autoPlayForFree(game, card, ap.source); return; }
+    // Гранты из очереди game._grants: autoPlay (комбо, напр. 35 -> 44 «Голоса!»)
+    // и бесплатное размещение (freeNext / freeIfDrawn).
+    const ap = game._grants.find(g => g.type === 'autoPlay' && g.id === def.id && !hasArrow(def));
+    if (ap) {
+      const srcInPlay = ap.source == null || findInPlay(game, ap.source);
+      if (srcInPlay) {
+        autoPlayForFree(game, card, ap.source); return;
       }
     }
-    if (hasArrow(def) || (game._freeNext && !hasArrow(def)) || (game._freeIfDrawn && game._freeIfDrawn.indexOf(def.id) !== -1)) {
-      game._freeNext = null;
+    const freeIdx = game._grants.findIndex(g =>
+      g.type === 'freeNext' || (g.type === 'freeIfDrawn' && g.id === def.id));
+    if (hasArrow(def) || freeIdx !== -1) {
+      // one-shot гранты бесплатного размещения расходуются; стоящая способность
+      // autoPlay (напр. 35 -> 44) — НЕТ (действует, пока источник в игре).
+      game._grants = game._grants.filter(g => {
+        if (g.type === 'freeNext') return false;
+        if (g.type === 'freeIfDrawn') return g.id !== def.id;
+        return true;
+      });
       autoEnter(game, card); return;
     }
     // выбор Купить/Сбросить
@@ -1348,23 +1315,29 @@
 
   function hasArrow(def) { return def.placement === 'threat' || def.placement === 'home'; }
 
+  // Хорошее вино (2): следующий Посетитель подкладывается под Ужин (38),
+  // если 38 уже наложена на другого Посетителя. Возвращает true, если гость
+  // был похоронен (тогда дальнейшие эффекты входа подавляются).
+  function applyWineBury(game, card) {
+    if (findInPlay(game, 2) && !card.flags.buried45 && !card.attachments.some(a => a.def.id === 38)) {
+      const host = game.home.concat(game.threat).find(c => c.attachments.some(a => a.def.id === 38));
+      const dinner = host ? host.attachments.find(a => a.def.id === 38) : null;
+      if (dinner) {
+        removeFrom(game, card);
+        dinner.under.push(card);
+        card.flags.wineBuried = true;
+        Logger.bury(game, card, dinner);
+        checkLoss(game);
+        return true;
+      }
+    }
+    return false;
+  }
+
   function fireEnter(game, card) {
     const def = card.def;
     if (isVisitor(def)) {
-      // Хорошее вино (2): следующий Посетитель подкладывается под Ужин (38),
-      // если 38 уже наложена на другого Посетителя
-      if (findInPlay(game, 2) && !card.flags.buried45 && !card.attachments.some(a => a.def.id === 38)) {
-        const host = game.home.concat(game.threat).find(c => c.attachments.some(a => a.def.id === 38));
-        const dinner = host ? host.attachments.find(a => a.def.id === 38) : null;
-        if (dinner) {
-          removeFrom(game, card);
-          dinner.under.push(card);
-          card.flags.wineBuried = true;
-          Logger.bury(game, card, dinner);
-          checkLoss(game);
-          return;
-        }
-      }
+      if (applyWineBury(game, card)) return;
       fireEvent(game, 'visitorRevealed', { triggering: card, pre: true });
       if (game._skipVisitorEffects) { game._skipVisitorEffects = false; return; }
       if (card.flags.stored) { checkLoss(game); return; }
@@ -1386,12 +1359,11 @@
   }
 
   // ---------- Ход (единый фазовый step) ----------
-  // Фазы: start -> (startPending) -> draw -> (enterPending) | choice -> ... -> start
+  // Фазы: start -> (turnStartArmed) -> draw -> (enterPending) | choice -> ... -> start
   function step(game) {
     if (game.status !== 'playing' || game.pending) return;
     switch (game.phase) {
       case 'start': doStart(game); break;
-      case 'startPending': continueTurnStartOrDraw(game); break;
       case 'draw': doDraw(game); break;
       case 'enterPending': afterEnter(game); break;
       case 'turnStartArmed': break; // ждём выбора игрока (tap/пропуск)
@@ -1402,16 +1374,13 @@
     game.turn++;
     game._scoreAdd = 0;
     const armed = computeArmedTurnStart(game).map(c => c.def.id);
-    // авто-активация бесплатных заведомо полезных эффектов (до пересчёта живых,
-    // т.к. они могут изменить состояние и сделать другие эффекты «мёртвыми»)
+    // авто-активация бесплатных заведомо полезных эффектов (Коллекционер и т.п.)
     const auto = armed.filter(id => AUTO_TURNSTART.has(id));
-    for (const id of auto) {
-      if (probeArmed(game, id)) runAutoActivate(game, id);
-    }
-    // отбросить «мёртвые» (бесполезные прямо сейчас) эффекты СБРОС
-    const live = armed.filter(id => !AUTO_TURNSTART.has(id) && probeArmed(game, id));
+    for (const id of auto) runAutoRule(game, id);
+    // остальные СБРОС-эффекты: предлагаем только «живые» (есть осмысленная цель),
+    // «мёртвые» авто-пропускаем, чтобы не предлагать бессмысленный выбор.
+    const live = armed.filter(id => !AUTO_TURNSTART.has(id) && ruleIsLive(game, turnStartRule(game, id)));
     game._armedTurnStart = live;
-    if (game.pending) { game.phase = 'turnStartArmed'; return; } // страховка
     if (auto.length) {
       Logger.autoApplied(game, auto.map(id => (root.CARD_BY_ID[id] ? root.CARD_BY_ID[id].name : id)));
     }
@@ -1420,7 +1389,7 @@
       doDraw(game);
       return;
     }
-    game._armedActivate = null;
+    if (game.pending) { game.phase = 'turnStartArmed'; return; } // страховка (авто-эффект дал выбор)
     game.phase = 'turnStartArmed';
   }
 
@@ -1466,11 +1435,7 @@
     doDraw(game);
   }
 
-  // продолжить очередь turnStart после резолва pending, затем — открытие карты
-  function continueTurnStartOrDraw(game) {
-    if (runTurnStart(game)) { game.phase = 'startPending'; return; }
-    doDraw(game);
-  }
+  // (продолжение после резолва СБРОС-выбора — см. choose / activateTurnStart)
 
   function doDraw(game) {
     if (game.deck.length === 0) { fireEvent(game, 'deckEmpty'); return; }
@@ -1488,31 +1453,15 @@
     game.phase = 'choice';
   }
 
-  // Преданный фанат (1): переместить на последнюю карту Дома и сделать её Пустой
-  function moveFanTo(game) {
-    const fan = findAnywhere(game, 1);
-    if (!fan) return;
-    if (game.home.length === 0) return;
-    const last = game.home[game.home.length - 1];
-    if (last === undefined) return;
-    if (last === fan) return;
-    if (last.attachments.indexOf(fan) !== -1) return; // уже на последней
-    // отцепить от старого хозяина и восстановить его
-    for (const c of game.home.concat(game.threat)) {
-      const i = c.attachments.indexOf(fan);
-      if (i !== -1) { c.attachments.splice(i, 1); c.empty = false; }
-    }
-    removeFrom(game, fan); // вытащить, если фанат остался top-level в зоне
-    last.attachments.push(fan);
-    last.empty = true;
-  }
+  // Преданный фанат (1): перемещение на последнюю карту Дома описано в RULES
+  // через событие homeCardEntered (op 'moveFan'); здесь лишь инициируем его.
 
   function autoPlace(game, card) {
     const zone = card.def.placement === 'threat' ? game.threat : game.home;
     zone.push(card);
     Logger.enter(game, card, card.def.placement === 'threat' ? 'threat' : 'home');
     fireEnter(game, card);
-    if (zone === game.home) moveFanTo(game);
+    if (zone === game.home) fireEvent(game, 'homeCardEntered');
     if (game.pending) game.phase = 'enterPending';
   }
 
@@ -1551,7 +1500,7 @@
         addEnergy(game, -buyCost(game));
         game.home.push(card);
         fireEnter(game, card);
-        moveFanTo(game);
+        fireEvent(game, 'homeCardEntered');
       } else {
         game.discard.push(card);
         Logger.discardCard(game, card, '');
@@ -1581,7 +1530,7 @@
     activateTurnStart, skipTurnStart,
     threatCount, baseScore, computeScore, scoreBreakdown, inPlay, findInPlay, fireEnter,
     mulberry32, shuffle, makeInstance, buyCost,
-    _internal: { fireEvent, runOps, executeOp, killOne, removeFrom, placeDrawnCard, checkLoss, autoPlace, computeArmedTurnStart, probeArmed, cloneGame, sigExcl, findAnywhere, findInPlayInclAttach },
+    _internal: { fireEvent, runOps, executeOp, killOne, removeFrom, placeDrawnCard, checkLoss, autoPlace, computeArmedTurnStart, findAnywhere, findInPlayInclAttach },
   };
 
   if (typeof module !== 'undefined' && module.exports) {

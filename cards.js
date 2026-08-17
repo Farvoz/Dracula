@@ -30,6 +30,19 @@
  *   attachment    — наложение / жетон (чип ◎, только если нет других чипов)
  * Чипы в UI выводятся из этих полей (cardChips в index.html).
  * Поле kind удалено: оно дублировало флаги и не влияло на логику.
+ *
+ * ПОВЕДЕНЧЕСКИЕ ФЛАГИ (доп. поля в CARDS, читаются движком):
+ *   immuneTo            — id карт, на которые не действуют эффекты (защита хозяина)
+ *   buyCostMod          — цена покупки (число) вместо CARD_META.BUY_COST
+ *   threatWeight        — вес Посетителя для Дом, милый дом (по умолчанию 1)
+ *   threatLossAt        — порог посетителей для поражения (карта 20)
+ *   ghost               — жетон-призрак: перехват/setAside при убийстве носителя
+ *   shieldTokens        — поглощает направленное убийство жетоном вместо гибели
+ *   tokenOnKill         — получает жетон при убийстве посетителя
+ *   absorbVisitorEffects— Сэр Здоровяк: перехватывает эффекты по посетителям
+ *   hiddenUnder         — карта прячет карты под себя (Коллекционер)
+ * Поле onKillScore из ранних спецификаций НЕ реализовано (его роль играет
+ * призрак/жетоны через RULES + поле ghost); оставлено в AGENTS.md как устаревшее.
  */
 
 const CARD_META = {
@@ -215,10 +228,14 @@ function hasRedVP(c) { const v = c.vp; return typeof v === 'number' && v !== 0; 
 const RULES = [
   // 1 Преданный фанат: перемещается на последнюю карту Дома и делает её Пустой
   { source: 1, event: 'enter', do: [{ op: 'attach', target: 'latestHome', makeEmpty: true }] },
+  // 1 Преданный фанат: при разыгрывании ЛЮБОЙ новой карты Дома — переместиться на неё.
+  // source:null — фанат может быть вложен (attachments), поэтому не гейтимся по
+  // findInPlay; op 'moveFan' сам ищет его через findAnywhere и no-op при отсутствии.
+  { source: null, event: 'homeCardEntered', do: [{ op: 'moveFan' }] },
 
   // 3 Ужасный экспонат: +2 посетителя в колоду; ПО = 1 + под ней
   { source: 3, event: 'enter', do: [{ op: 'addVisitors', n: 2 }] },
-  { source: 3, event: 'gameEnd', do: [{ op: 'scoreUnder', id: 3, base: 1 }] },
+  { source: 3, event: 'gameEnd', do: [{ op: 'score', mode: 'under', id: 3, base: 1 }] },
 
   // 4 Банши: в начале хода можете убить + заместить
   { source: 4, event: 'turnStart', do: [{ op: 'banshee' }] },
@@ -238,7 +255,7 @@ const RULES = [
   { source: 6, event: 'enter', do: [{ op: 'setEmpty', target: 'rightOfSelf' }] },
 
   // 10 Библиотека Дедала
-  { source: 10, event: 'gameEnd', do: [{ op: 'scoreThreat', empty: 2, per: -1 }] },
+  { source: 10, event: 'gameEnd', do: [{ op: 'score', mode: 'threat', empty: 2, per: -1 }] },
 
   // 11/26 Оплывшие свечи / Зловония: следующая без стрелки — бесплатно в Дом
   { source: 11, event: 'enter', where: { inPlay: [26] }, do: [{ op: 'freePlaceNext', zone: 'home' }] },
@@ -267,8 +284,8 @@ const RULES = [
   { source: 22, event: 'enter', do: [{ op: 'memoirChoice' }] },
 
   // 23/28 Великолепный зал / Роскошное фойе: база 2★, в паре даёт 3★ (итого +1 к базе)
-  { source: 23, event: 'gameEnd', do: [{ op: 'scoreIf', inPlay: [28], value: 1 }] },
-  { source: 28, event: 'gameEnd', do: [{ op: 'scoreIf', inPlay: [23], value: 1 }] },
+  { source: 23, event: 'gameEnd', do: [{ op: 'score', mode: 'ifInPlay', ids: [28], value: 1 }] },
+  { source: 28, event: 'gameEnd', do: [{ op: 'score', mode: 'ifInPlay', ids: [23], value: 1 }] },
 
   // 25 Уголки и закоулки
   { source: 25, event: 'turnStart', do: [{ op: 'payToShuffleVisitors', range: [1, 3] }] },
@@ -299,7 +316,7 @@ const RULES = [
   { source: 38, event: 'enter', discretionary: true, do: [{ op: 'attach', target: 'threatVisitor' }] },
 
   // 39 Головокружительный вид
-  { source: 39, event: 'gameEnd', do: [{ op: 'scorePer', inPlay: [22, 2], value: 1 }] },
+  { source: 39, event: 'gameEnd', do: [{ op: 'score', mode: 'perInPlay', ids: [22, 2], value: 1 }] },
 
   // 41 Часы пробили 13: в начале хода (за сброс) посмотреть 4 верхние и переставить
   { source: 41, event: 'turnStart', do: [{ op: 'peek', n: 4, discardSelf: true }] },
@@ -317,7 +334,7 @@ const RULES = [
   { source: 45, event: 'visitorRevealed', pre: true, where: { selfUnderEmpty: true }, do: [{ op: 'buryUnder', card: 45, skipEffects: true }] },
 
   // 46 Трофейная комната
-  { source: 46, event: 'gameEnd', do: [{ op: 'scorePer', inPlay: [5, 31, 37], value: 1 }] },
+  { source: 46, event: 'gameEnd', do: [{ op: 'score', mode: 'perInPlay', ids: [5, 31, 37], value: 1 }] },
 
   // 47 Жутковатая формальность: +1 посетитель (за сброс в начале хода)
   { source: 47, event: 'turnStart', do: [{ op: 'addVisitors', n: 1, discardSelf: true }] },
@@ -361,13 +378,49 @@ const GAME_RULES = [
 // openings[0]), как и раньше. Количество открываемых карт вынесено в данные.
 const PREP = { openings: 3 };
 
+// ----- СТРУКТУРИРОВАННОЕ ОПИСАНИЕ МЕХАНИКИ (mechanics) -----
+// Генерируется ИЗ RULES (единственный источник поведения) — без дрейфа с
+// текстом. Используется UI для тултипов/подсказок. Поле cost выводится из
+// ops (discardSelf -> 'discard', payToShuffleVisitors -> 'energy:N').
+function buildMechanics() {
+  const m = {};
+  const all = RULES.concat(GAME_RULES);
+  for (const c of CARDS) {
+    const triggers = new Set();
+    let cost = null;
+    const actions = new Set();
+    for (const r of all) {
+      if (r.source !== c.id) continue;
+      triggers.add(r.event);
+      for (const op of (r.do || [])) {
+        if (op.discardSelf) cost = 'discard';
+        if (op.op === 'payToShuffleVisitors' && op.range) cost = 'energy:' + op.range[0];
+        actions.add(op.op);
+      }
+    }
+    m[c.id] = {
+      triggers: Array.from(triggers),
+      cost,
+      actions: Array.from(actions),
+      visitor: !!c.visitor,
+      placement: c.placement,
+      instant: !!c.instant,
+      discardEffect: !!c.discardEffect,
+      attachment: !!c.attachment,
+    };
+  }
+  return m;
+}
+
 const CARD_BY_ID = {};
 CARDS.forEach(c => CARD_BY_ID[c.id] = c);
+const MECHANICS = buildMechanics();
+CARDS.forEach(c => { c.mechanics = MECHANICS[c.id]; });
 
 if (typeof module !== 'undefined') {
-  module.exports = { CARDS, CARD_BY_ID, CARD_META, DIFFICULTY, RULES, GAME_RULES, PREP };
+  module.exports = { CARDS, CARD_BY_ID, CARD_META, DIFFICULTY, RULES, GAME_RULES, PREP, MECHANICS };
 } else {
   window.CARDS = CARDS; window.CARD_BY_ID = CARD_BY_ID; window.CARD_META = CARD_META;
   window.DIFFICULTY = DIFFICULTY; window.RULES = RULES;
-  window.GAME_RULES = GAME_RULES; window.PREP = PREP;
+  window.GAME_RULES = GAME_RULES; window.PREP = PREP; window.MECHANICS = MECHANICS;
 }
