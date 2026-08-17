@@ -87,13 +87,14 @@ const CARDS = [
     effect: "Если Зверь на этой карте, вы можете сбросить ее в начале хода, чтобы убить всех Посетителей в Зоне Угрозы и поместить их под эту карту. В Зоне Угрозы должно быть минимум 3 Посетителя." },
 
   { id: 14, name: "Археолог Нюхач", placement: "threat", instant: true, vp: 0, visitor: true,
+    tokenOnKill: true, shieldTokens: true,
     effect: "Поместите жетон на эту карту за каждого убитого до сих пор Посетителя. Когда убиваете Посетителя, добавьте жетон. Когда эффект нацелен на эту карту, вместо этого уберите один жетон. Если жетонов нет, примените эффект как обычно." },
 
   { id: 15, name: "Мстительный фермер", placement: "threat", instant: true, vp: 0, visitor: true,
     effect: "Сбросьте карту без красного символа ПО из Домашней зоны. Если таких карт нет, сбросьте любую карту из Домашней зоны." },
 
   { id: 16, name: "Злорадное привидение", placement: "choice", vp: 0, attachment: true,
-    onKillScore: true,
+    ghost: true,
     effect: "Поместите на Посетителя. Когда вы его убиваете, отложите обе карты в сторону до конца игры и получите 1 ПО." },
 
   { id: 17, name: "Легковерный оккультист", placement: "threat", vp: 0, visitor: true,
@@ -134,7 +135,7 @@ const CARDS = [
   { id: 28, name: "Роскошное фойе", placement: "choice", vp: {scaled: 2},
     effect: "Получите 3 очка, если Великолепный зал тоже в игре." },
 
-  { id: 29, name: "Пытошная", placement: "choice", vp: 1,
+  { id: 29, name: "Пытошная", placement: "choice", vp: 0,
     effect: "Когда применяете эффект карты Да, господин, можете заплатить 1 энергию, вместо того чтобы сбросить ее." },
 
   { id: 30, name: "Бульварный писака", placement: "threat", instant: true, vp: 0, visitor: true,
@@ -225,6 +226,11 @@ const RULES = [
   // 7 Будь на стиле: +1 энергии за каждого открытого посетителя
   { source: 7, event: 'visitorRevealed', do: [{ op: 'energy', value: 1 }] },
 
+  // 5 Странный приём: наложить на карту Дома (защищает хозяина через immuneTo вложения)
+  { source: 5, event: 'enter', do: [{ op: 'attach', target: 'choice' }] },
+  // 31 Ревущее пламя: наложить на следующего Посетителя и погасить его текст
+  { source: 31, event: 'visitorRevealed', pre: true, do: [{ op: 'attach', target: 'nextVisitor', ignoreText: true }] },
+
   // 8 Охотник на монстров: сбросить одну из списка из игры
   { source: 8, event: 'enter', discretionary: true, do: [{ op: 'discardFromPlay', ids: [5, 40, 4, 50, 33] }] },
 
@@ -238,13 +244,20 @@ const RULES = [
   { source: 11, event: 'enter', where: { inPlay: [26] }, do: [{ op: 'freePlaceNext', zone: 'home' }] },
   { source: 26, event: 'enter', where: { inPlay: [11] }, do: [{ op: 'freePlaceNext', zone: 'home' }] },
 
+  // 12 Пир для мойго: при Логове в игре — под неё; снижает порог Логова до 2
+  { source: 12, event: 'enter', where: { inPlay: [13] }, do: [{ op: 'moveUnder', card: 12, target: 13 }] },
+  // 13 Логово людоеда: при Пире в игре — положить Пир под неё (зеркально)
+  { source: 13, event: 'enter', where: { inPlay: [12] }, do: [{ op: 'moveUnder', card: 12, target: 13 }] },
   // 13 Логово людоеда: в начале хода — пир
   { source: 13, event: 'turnStart', do: [{ op: 'beastFeast' }] },
+  // 40 Зверь: топливо для Логова (иначе сбрасывается)
+  { source: 40, event: 'enter', do: [{ op: 'beast' }] },
 
   // 15 Мстительный фермер: сбросить карту Дома без ПО
   { source: 15, event: 'enter', do: [{ op: 'discardHome', match: 'noVP', target: 'choice' }] },
 
-  // 16 Злорадное привидение: +1 ПО при убийстве (через onKillScore)
+  // 16 Злорадное привидение: наложить на Посетителя; +1 ПО перманентно при его убийстве
+  { source: 16, event: 'enter', do: [{ op: 'attach', target: 'threatVisitor' }] },
   // 17 Легковерный оккультист: buyCostMod (учитывается движком)
 
   // 18 Зеркальный зал: в начале хода (по выбору) сбросить → вернуть посетителя под низ
@@ -276,8 +289,8 @@ const RULES = [
   { source: 34, event: 'enter', do: [{ op: 'energy', value: -2 }] },
   { source: 34, event: 'visitorRevealed', do: [{ op: 'energy', value: -1 }] },
 
-  // 35 Зловещее красноречие: авто-разыгрыш Голоса!
-  { source: 35, event: 'enter', do: [{ op: 'autoPlayIfDrawn', id: 44 }] },
+  // 35 Зловещее красноречие: авто-разыгрыш Голоса! (source — для сброса обеих карт «нет посетителей»)
+  { source: 35, event: 'enter', do: [{ op: 'autoPlayIfDrawn', id: 44, source: 35 }] },
 
   // 37 Безупречная чистота: забрать из-под Трагической случайности (за сброс в начале хода)
   { source: 37, event: 'turnStart', do: [{ op: 'takeFromUnder', card: 45, discardSelf: true }] },
@@ -314,6 +327,12 @@ const RULES = [
 
   // 50 Да, господин: сброс в начале хода, убить посетителя
   { source: 50, event: 'turnStart', do: [{ op: 'killVisitor', count: 1, discardSelf: true }] },
+
+  // 14 Археолог Нюхач: инициализировать жетоны числом убитых посетителей
+  { source: 14, event: 'enter', do: [{ op: 'tokenInit' }] },
+
+  // 24 Ветхий будуар: захват 1-го посетителя под себя; реплей при 2-м
+  { source: 24, event: 'visitorRevealed', pre: true, where: { inPlay: [24] }, do: [{ op: 'buduarCapture' }] },
 ];
 
 // ----- ОБЩИЕ ПРАВИЛА ИГРЫ (GAME_RULES) -----

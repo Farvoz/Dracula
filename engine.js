@@ -30,8 +30,31 @@
 
   function inPlay(game) { return game.home.concat(game.threat); }
 
+  // Пытошная (id 29) в игре (не пустая) — даёт «Да, господин» платить 1⚡ вместо сброса
+  function pytoshnayaInPlay(game) {
+    return inPlay(game).some(c => c.def.id === 29 && !c.empty);
+  }
+
   function findInPlay(game, id) {
     return inPlay(game).find(c => c.def.id === id);
+  }
+
+  // рекурсивный поиск карты (включая вложения .under и .attachments) по home+threat
+  function findAnywhere(game, id) {
+    const walk = (list) => {
+      for (const c of list) {
+        if (c.def.id === id) return c;
+        const r = walk(c.under) || walk(c.attachments);
+        if (r) return r;
+      }
+      return null;
+    };
+    return walk(game.home.concat(game.threat));
+  }
+
+  // поиск для скоринга: карта в игре, включая прикреплённые (карта 46 → 5/31/37)
+  function findInPlayInclAttach(game, id) {
+    return findAnywhere(game, id);
   }
 
   function isVisitor(def) { return !!def.visitor; }
@@ -108,6 +131,9 @@
     buy(game, card, cost) { this._push(game, 'Куплено: ' + card.def.name + ' (−' + cost + '⚡)'); },
     discardCard(game, card, src) { this._push(game, (src ? src + ': сброшена ' : 'Сброшена ') + card.def.name); },
     kill(game, card) { this._push(game, 'Убит ' + card.def.name); },
+    shield(game, card) { this._push(game, card.def.name + ' поглотила убийство жетоном'); },
+    buduar(game, card, bud) { this._push(game, card.def.name + ' захвачен Будуаром (под ' + bud.def.name + ')'); },
+    buduarRelease(game, card, bud) { this._push(game, card.def.name + ' освобождён из Будуара (реплей)'); },
     bury(game, card, under) { this._push(game, card.def.name + ' под ' + under.def.name); },
     becameEmpty(game, name) { this._push(game, name + ' стала Пустой'); },
     becameEmptyMulti(game, n) { this._push(game, n + ' карт(ы) стали Пустыми'); },
@@ -168,7 +194,7 @@
   // ---------- Авто-пропуск / авто-активация начала хода ----------
   // Бесплатные заведомо полезные СБРОС-эффекты, активируемые автоматически
   // без запроса игрока (no downside, приносят пользу самим фактом применения).
-  const AUTO_TURNSTART = new Set([13, 42]); // Логово людоеда, Коллекционер (бесплатные заведомо полезные)
+  const AUTO_TURNSTART = new Set([42]); // Коллекционер (бесплатный заведомо полезный); 13 убрана (ручной выбор пира)
 
   // глубокая копия изменяемых зон (def НЕ копируем; rng -> детерминированный стаб,
   // чтобы зонд не сдвигал реальный PRNG и не влиял на будущие открытия)
@@ -183,6 +209,10 @@
     c._scoreLog = (g._scoreLog || []).slice();
     c._scoreAdd = g._scoreAdd || 0;
     c.energy = g.energy;
+    c.setAside = (g.setAside || []).map(cloneInst);
+    c._kills = g._kills || 0;
+    c._killScore = g._killScore || 0;
+    c._portraitUsed = !!g._portraitUsed;
     c.rng = function () { return 0; };
     c._armedActivate = null;
     c._resumeStack = [];
@@ -247,17 +277,17 @@
         if (v) killOne(game, v);
         const self = game.home.concat(game.threat).find(c => c.def.id === 4);
         if (self) { removeFrom(game, self); game.deck.push(self); }
-        for (const vis of game.threat.filter(c => c.def.visitor).slice()) { removeFrom(game, vis); game.deck.push(vis); }
+        for (const vis of redirectToAbsorber(game, game.threat.filter(c => c.def.visitor).slice())) { removeFrom(game, vis); game.deck.push(vis); }
         shuffle(game.deck, game.rng);
       }
       game.pending = null;
       continueResume(game);
-    } else if (k === 'beastFeast') {
-      const self = game.home.concat(game.threat).find(c => c.def.id === game._pendingSource);
-      const all = game.threat.filter(c => c.def.visitor).slice();
-      for (const v of all) killOne(game, v, self ? self.def.id : null);
-      game._pendingSource = null; game.pending = null;
-      continueResume(game);
+      } else if (k === 'beastFeast') {
+        const self = game.home.concat(game.threat).find(c => c.def.id === game._pendingSource);
+        const all = redirectToAbsorber(game, game.threat.filter(c => c.def.visitor).slice());
+        for (const v of all) killOne(game, v, self ? self.def.id : null);
+        game._pendingSource = null; game.pending = null;
+        continueResume(game);
     }
   }
 
@@ -334,7 +364,8 @@
     shuffle(deck, rng);
 
     const game = {
-      deck, discard, home, threat: [], supply,
+      deck, discard, home, threat: [], supply, setAside: [],
+      _kills: 0, _killScore: 0, _portraitUsed: false,
       energy: 0,
       turn: 0, status: 'playing', phase: 'start',
       pending: null, seed, rng, log: [],
@@ -414,7 +445,13 @@
     const trig = opts.triggering;
     const rules = rulesFor(event, game, opts.sourceId, pre);
     // отфильтровать по where (как раньше)
-    const matched = rules.filter(r => !r.where || matchWhere(game, r.where, { source: r.source, triggering: trig }));
+    const matched = rules.filter(r => {
+      if (r.where && !matchWhere(game, r.where, { source: r.source, triggering: trig })) return false;
+      // карта не триггерит собственное visitorRevealed при своём появлении
+      // (стандартная семантика «входит в игру»: эффект срабатывает на других посетителей)
+      if (event === 'visitorRevealed' && trig && r.source != null && trig.def && trig.def.id === r.source) return false;
+      return true;
+    });
 
     // turnStart / gameEnd всегда срабатывают полностью (без выбора "один из")
     const competeExcluded = (event === 'turnStart' || event === 'gameEnd');
@@ -500,19 +537,30 @@
       case 'killVisitor': {
         let count = op.count || 1;
         if (op.target === 'all') {
-        const all = killableVisitors(game);
+        const all = redirectToAbsorber(game, killableVisitors(game));
           for (const v of all) killOne(game, v, op.under);
           return false;
         }
         // выбор посетителя
-        const targets = killableVisitors(game);
+        const targets = redirectToAbsorber(game, killableVisitors(game));
         if (targets.length === 0) return false;
         const self = (ctx.source != null)
           ? game.home.concat(game.threat).find(c => c.def.id === ctx.source)
           : null;
         if (op.discardSelf) {
           if (!self) return false;
-          if (armedDiscardSelf(game, self)) {
+          // Пытошная (29): «Да, господин» (50) — заплатить 1⚡ вместо сброса
+          if (ctx.source === 50 && pytoshnayaInPlay(game) && game.energy >= 1) {
+            const srcName = root.CARD_BY_ID[50] ? root.CARD_BY_ID[50].name : 'Карта';
+            setPending(game, 'payKeepSelf',
+              ['pay', 'discard', 'no'],
+              srcName + ': заплатить 1⚡, чтобы оставить карту в игре, или сбросить её?');
+            game._pendingOp = op; game._pendingSelf = self; return true;
+          }
+          if (game._freePlay) {
+            // бесплатное «разыгрывание»: карта сразу уходит в сброс, далее — выбор цели
+            removeFrom(game, self); game.discard.push(self); Logger.armedDiscard(game, self);
+          } else if (armedDiscardSelf(game, self)) {
             // далее — выбор цели
           } else {
             const options = targets.map(c => c.def.id).concat(['no']);
@@ -561,7 +609,7 @@
         const self = (ctx.source != null)
           ? game.home.concat(game.threat).find(c => c.def.id === ctx.source)
           : null;
-        const targets = inPlay(game).filter(c => c.def.visitor && !c.empty);
+        const targets = redirectToAbsorber(game, inPlay(game).filter(c => c.def.visitor && !c.empty));
         if (op.discardSelf) {
           if (!self || targets.length === 0) return false;
           if (armedDiscardSelf(game, self)) {
@@ -579,7 +627,7 @@
         game._pendingOp = op; return true;
       }
       case 'payToShuffleVisitors': {
-        const targets = game.threat.filter(c => c.def.visitor);
+        const targets = redirectToAbsorber(game, game.threat.filter(c => c.def.visitor));
         const max = Math.min(op.range[1], targets.length, game.energy);
         if (max < op.range[0]) return false;
         game._pendingBudget = max;
@@ -590,27 +638,47 @@
       case 'beastFeast': {
         const self = game.home.concat(game.threat).find(c => c.def.id === ctx.source);
         const beast = self && self.attachments.some(a => a.def.id === 40);
-        if (beast && threatCount(game) >= 3) {
-          if (game._armedActivate === ctx.source) {
-            const all = game.threat.filter(c => c.def.visitor).slice();
-            for (const v of all) killOne(game, v, self ? self.def.id : null);
-            game._pendingSource = null;
-            return false;
+        if (beast) {
+          const required = (findAnywhere(game, 12) || self.under.some(x => x.def.id === 12)) ? 2 : 3;
+          if (threatCount(game) >= required) {
+            setPending(game, 'beastFeast', ['yes', 'no'], 'Логово людоеда: убить всех и захоронить?');
+            game._pendingOp = op; game._pendingSource = ctx.source; return true;
           }
-          setPending(game, 'beastFeast', ['yes', 'no'], 'Логово людоеда: убить всех и захоронить?');
-          game._pendingOp = op; game._pendingSource = ctx.source; return true;
         }
         return false;
       }
-      case 'buryUnder': {
+      case 'moveUnder': {
         const card = findInPlay(game, op.card);
+        if (!card) return false;
+        const target = findAnywhere(game, op.target);
+        if (!target) return false;
+        removeFrom(game, card);
+        target.under.push(card);
+        Logger.bury(game, card, target);
+        return false;
+      }
+      case 'beast': {
+        const self = game.home.concat(game.threat).find(c => c.def.id === ctx.source);
+        if (!self) return false;
+        const lair = findInPlay(game, 13);
+        if (lair) {
+          removeFrom(game, self); lair.attachments.push(self); Logger.attach(game, self, lair);
+          return false;
+        }
+        // ветка «Пир» переинтерпретирована (§3.5): 40 не сбрасывает 12+себя и не убивает
+        // посетителя самостоятельно; без Логова Зверь просто сбрасывается
+        removeFrom(game, self); game.discard.push(self);
+        return false;
+      }
+      case 'buryUnder': {
+        const card = findAnywhere(game, op.card);
         if (!card) return false;
         const v = ctx.triggering;
         if (!v) return false;
         // убрать из зоны, положить под card
         removeFrom(game, v);
          card.under.push(v);
-         if (op.skipEffects) { game._skipVisitorEffects = true; }
+         if (op.skipEffects) { v.flags.buried45 = true; }
          Logger.bury(game, v, card);
          return false;
       }
@@ -638,24 +706,18 @@
             ? game.home.concat(game.threat).find(c => c.def.id === ctx.source)
             : null;
           if (!self) return false;
-          const c = card.under.shift();
-          if (armedDiscardSelf(game, self)) {
-            setPending(game, 'takeFromUnder', ['discard', 'underExpo'], 'Забрать карту из-под Трагической случайности');
-            game._pendingCard2 = c; game._pendingOp = op; return true;
-          }
           const srcName = (ctx.source != null && root.CARD_BY_ID[ctx.source]) ? root.CARD_BY_ID[ctx.source].name : 'Карта';
-          setPending(game, 'takeFromUnder', ['discard', 'underExpo', 'no'], srcName + ': сбросить, чтобы забрать карту из-под Трагической случайности?');
-          game._pendingCard2 = c; game._pendingOp = op; game._pendingSelf = self; return true;
+          setPending(game, 'takeFromUnder', ['discard', 'underExpo'], srcName + ': сбросить, чтобы забрать карту из-под ' + card.def.name + '?');
+          game._pendingCard2 = card; game._pendingOp = op; game._pendingSelf = self; return true;
         }
-        const c = card.under.shift();
-        setPending(game, 'takeFromUnder', ['discard', 'underExpo'], 'Забрать карту из-под Трагической случайности');
-        game._pendingCard2 = c; game._pendingOp = op; return true;
+        setPending(game, 'takeFromUnder', ['discard', 'underExpo'], 'Забрать карту из-под ' + card.def.name);
+        game._pendingCard2 = card; game._pendingOp = op; return true;
       }
       case 'discardHome': {
         const match = op.match || 'any';
         const srcName = (ctx.source != null && root.CARD_BY_ID[ctx.source]) ? root.CARD_BY_ID[ctx.source].name : '';
         let pool = game.home.filter(c => !c.empty);
-        if (ctx.source != null) pool = pool.filter(c => !(c.def.immuneTo && c.def.immuneTo.indexOf(ctx.source) !== -1));
+        if (ctx.source != null) pool = pool.filter(c => !(c.def.immuneTo && c.def.immuneTo.indexOf(ctx.source) !== -1) && !c.attachments.some(a => a.def.immuneTo && a.def.immuneTo.indexOf(ctx.source) !== -1));
         if (match === 'hasVP') pool = pool.filter(c => hasRedSeal(c.def));
         else if (match === 'noVP') pool = pool.filter(c => !hasRedSeal(c.def));
         if (pool.length === 0) return false;
@@ -722,7 +784,7 @@
           target = pool[pool.length - 1];
         } else if (op.target === 'nextVisitor') target = ctx.triggering;
         else if (op.target === 'threatVisitor') {
-          const pool = game.threat.filter(c => c !== self);
+          const pool = game.threat.filter(c => c !== self && c.def.visitor);
           if (pool.length > 1) { setPending(game, 'attach', pool.map(c => c.def.id), 'Наложить'); game._pendingOp = op; game._pendingSource = ctx.source; return true; }
           target = pool[0];
         } else if (op.target === 'choice') {
@@ -730,7 +792,38 @@
           if (pool.length > 1) { setPending(game, 'attach', pool.map(c => c.def.id), 'Наложить'); game._pendingOp = op; game._pendingSource = ctx.source; return true; }
           target = pool[0];
         }
-        if (target) { removeFrom(game, self); target.attachments.push(self); Logger.attach(game, self, target); if (op.makeEmpty) target.empty = true; }
+        if (target) { removeFrom(game, self); target.attachments.push(self); Logger.attach(game, self, target); if (op.makeEmpty) target.empty = true; if (op.ignoreText) target.flags.ignoreText = true; }
+        return false;
+      }
+      case 'tokenInit': {
+        const self = game.home.concat(game.threat).find(c => c.def.id === ctx.source);
+        if (!self) return false;
+        self.tokens = (game._kills || 0);
+        return false;
+      }
+      case 'buduarCapture': {
+        const bud = findInPlay(game, 24);
+        if (!bud) return false;
+        const v = ctx.triggering;
+        if (!v) return false;
+        if ((bud.under.length || 0) === 0) {
+          // 1-й посетитель: под Будуар, эффекты подавлены
+          removeFrom(game, v);
+          bud.under.push(v);
+          v.flags.stored = true;
+          Logger.buduar(game, v, bud);
+          return false;
+        }
+        // 2-й посетитель: освободить захваченного, сбросить Будуар, реплей
+        const captured = bud.under.shift();
+        removeFrom(game, bud);
+        game.discard.push(bud);
+        if (captured) {
+          captured.flags.stored = false;
+          game.threat.push(captured);
+          Logger.buduarRelease(game, captured, bud);
+          fireEnter(game, captured); // эффекты как при свежем входе
+        }
         return false;
       }
       case 'setEmpty': {
@@ -745,7 +838,12 @@
           if (self) {
             const i = game.home.indexOf(self);
             let n = 0;
-            for (let k = i + 1; k < game.home.length; k++) { game.home[k].empty = true; n++; }
+            for (let k = i + 1; k < game.home.length; k++) {
+              const c = game.home[k];
+              if (c.def.immuneTo && c.def.immuneTo.indexOf(ctx.source) !== -1) continue;
+              if (c.attachments.some(a => a.def.immuneTo && a.def.immuneTo.indexOf(ctx.source) !== -1)) continue;
+              c.empty = true; n++;
+            }
             if (n) Logger.becameEmptyMulti(game, n);
           }
         }
@@ -779,7 +877,7 @@
       }
       case 'autoPlayIfDrawn': {
         game._autoPlayIfDrawn = game._autoPlayIfDrawn || [];
-        game._autoPlayIfDrawn.push(op.id);
+        game._autoPlayIfDrawn.push({ id: op.id, source: op.source });
         return false;
       }
       case 'memoirChoice': {
@@ -803,7 +901,7 @@
         return false;
       }
       case 'scorePer': {
-        const n = op.inPlay.filter(id => findInPlay(game, id)).length;
+        const n = op.inPlay.filter(id => findInPlayInclAttach(game, id)).length;
         const v = n * op.value;
         game._scoreAdd = (game._scoreAdd || 0) + v;
         pushScoreLog(game, ctx.source, v);
@@ -834,7 +932,7 @@
       }
       case 'banshee': {
         if (killableVisitors(game).length > 0) {
-          const opts = killableVisitors(game).map(c => c.def.id).concat(['no']);
+          const opts = redirectToAbsorber(game, killableVisitors(game)).map(c => c.def.id).concat(['no']);
           setPending(game, 'banshee', opts, 'Баньши: убить посетителя (выбор)?');
           game._pendingOp = op; return true;
         }
@@ -849,26 +947,59 @@
   const OPS = {}; // заполняется выше через executeOp (ссылка не нужна)
 
   function killOne(game, v, underId) {
+    // щит: поглотить убийство жетоном вместо гибели (Археолог Нюхач, 14)
+    if (v.def.shieldTokens && (v.tokens || 0) > 0) {
+      v.tokens--;
+      Logger.shield(game, v);
+      return;
+    }
+    // Злорадное привидение (16) на жертве: жертва в сброс, призрак в setAside,
+    // +1 ПО перманентно (game._killScore)
+    const ghost = v.attachments.find(a => a.def.ghost);
+    if (ghost) {
+      removeFrom(game, ghost);
+      game.setAside.push(ghost);
+      removeFrom(game, v);
+      game.discard.push(v);
+      Logger.kill(game, v);
+      game._killScore = (game._killScore || 0) + 1;
+      pushScoreLog(game, 16, 1);
+      game._kills = (game._kills || 0) + 1;
+      for (const c of game.home.concat(game.threat)) if (c.def.tokenOnKill) c.tokens = (c.tokens || 0) + 1;
+      return;
+    }
     removeFrom(game, v);
     if (underId != null) {
       const card = findInPlay(game, underId);
-      if (card) { card.under.push(v); Logger.bury(game, v, card); return; }
+      if (card) { card.under.push(v); Logger.bury(game, v, card); bumpKills(game); return; }
     }
     game.discard.push(v);
     Logger.kill(game, v);
-    // onKillScore: карты с этим свойством (Злорадное привидение и т.п.)
-    // получают +1 ПО за каждого убитого посетителя, остаются в игре
-    for (const c of game.home.concat(game.threat)) {
-      if (c.def.onKillScore) {
-        c.vpBonus = (c.vpBonus || 0) + 1;
-        Logger.scoreKill(game, c);
-      }
-    }
+    bumpKills(game);
+  }
+
+  // счётчик убийств + жетоны Археолога Нюхача (14)
+  function bumpKills(game) {
+    game._kills = (game._kills || 0) + 1;
+    for (const c of game.home.concat(game.threat)) if (c.def.tokenOnKill) c.tokens = (c.tokens || 0) + 1;
   }
 
   // посетители, которых можно убить (только настоящие посетители, не Дом, милый дом)
   function killableVisitors(game) {
     return game.threat.filter(c => c.def.visitor && !c.empty);
+  }
+
+  // «Сэр Здоровяк» (id 36): поглощает эффекты, направленные на посетителей.
+  // Возвращает карту-поглотитель в Зоне Угрозы (в игре — только она) либо null.
+  function absorbingVisitor(game) {
+    return game.threat.find(c => c.def.absorbVisitorEffects && !c.empty) || null;
+  }
+
+  // Перенаправляет список целей-посетителей на поглотителя, если он в игре.
+  // Массовые эффекты (по нескольким посетителям) бьют только по нему.
+  function redirectToAbsorber(game, base) {
+    const a = absorbingVisitor(game);
+    return a ? [a] : base;
   }
 
   function moveToBottom(game, c) {
@@ -908,7 +1039,27 @@
     if (kind === 'killVisitor') {
       if (selection !== 'no') {
         const v = game.threat.find(c => c.def.id === selection);
-        if (v) killOne(game, v, op && op.under);
+        if (v) {
+          const ghost = v.attachments.find(a => a.def.ghost);
+          if (ghost && findInPlay(game, 21) && !game._portraitUsed) {
+            // Импозантный портрет (21): перехват 1 раз за игру — переместить призрак на другого
+            const others = game.threat.filter(c => c !== v && c.def.visitor && !c.empty && !c.attachments.some(a => a.def.ghost));
+            if (others.length > 0) {
+              game._pendingGhostVictim = v;
+              setPending(game, 'ghostTarget', others.map(c => c.def.id), 'Злорадное привидение: переместить на другого Посетителя?');
+              game._pendingOp = op;
+              return; // ждём выбор цели
+            }
+          }
+          // Ужасный экспонат (3): выбор захоронения под карту
+          if (findInPlay(game, 3)) {
+            game._pendingExpoVictim = v;
+            setPending(game, 'buryUnderExpo', ['bury', 'discard'], 'Похоронить под Ужасный экспонат или сбросить?');
+            game._pendingOp = op;
+            return;
+          }
+          killOne(game, v, op && op.under);
+        }
         if (op && op.discardSelf && game._pendingSelf) {
           removeFrom(game, game._pendingSelf);
           game.discard.push(game._pendingSelf);
@@ -918,6 +1069,60 @@
         Logger.skip(game, 'убийство посетителя');
       }
       game._pendingOp = null;
+    } else if (kind === 'buryUnderExpo') {
+      const v = game._pendingExpoVictim;
+      if (v) {
+        if (selection === 'bury') killOne(game, v, 3);
+        else killOne(game, v, op && op.under);
+      }
+      if (op && op.discardSelf && game._pendingSelf) {
+        removeFrom(game, game._pendingSelf);
+        game.discard.push(game._pendingSelf);
+        game._pendingSelf = null;
+      }
+      game._pendingExpoVictim = null;
+      game._pendingOp = null;
+    } else if (kind === 'ghostTarget') {
+      const victim = game._pendingGhostVictim;
+      const ghost = victim ? victim.attachments.find(a => a.def.ghost) : null;
+      if (ghost) removeFrom(game, ghost); // отцепить ДО удаления жертвы (иначе orphanNested сбросит)
+      // убить жертву (сброс), +1 ПО, призрак переместить на выбранного Посетителя
+      removeFrom(game, victim);
+      game.discard.push(victim);
+      Logger.kill(game, victim);
+      game._killScore = (game._killScore || 0) + 1;
+      pushScoreLog(game, 16, 1);
+      if (ghost) {
+        const target = game.threat.find(c => c.def.id === selection);
+        if (target) { target.attachments.push(ghost); Logger.attach(game, ghost, target); }
+      }
+      game._portraitUsed = true;
+      if (op && op.discardSelf && game._pendingSelf) {
+        removeFrom(game, game._pendingSelf);
+        game.discard.push(game._pendingSelf);
+        game._pendingSelf = null;
+      }
+      game._pendingGhostVictim = null;
+      game._pendingOp = null;
+    } else     if (kind === 'payKeepSelf') {
+      const self = game._pendingSelf;
+      const targets = redirectToAbsorber(game, killableVisitors(game));
+      if (selection === 'pay') {
+        addEnergy(game, -1);
+        Logger.energy(game, -1);
+        game._pendingSelf = null; // карта остаётся в игре
+      } else if (selection === 'discard') {
+        // _pendingSelf сохраняется — после убийства карта уйдёт в сброс
+      } else {
+        Logger.skip(game, 'Да, господин (Пытошная)');
+        game._pendingSelf = null; game._pendingOp = null;
+        return;
+      }
+      if (targets.length === 1 && (op ? (op.count || 1) : 1) === 1) {
+        killOne(game, targets[0], op && op.under);
+        if (game._pendingSelf) { removeFrom(game, game._pendingSelf); game.discard.push(game._pendingSelf); game._pendingSelf = null; }
+      }
+      else { setPending(game, 'killVisitor', targets.map(c => c.def.id), 'Убить посетителя'); game._pendingOp = op; }
     } else if (kind === 'returnVisitorBottom') {
       if (selection !== 'no') {
         const c = inPlay(game).find(x => x.def.id === selection);
@@ -956,26 +1161,35 @@
         Logger.paySkip(game);
       }
       game._pendingBudget = null;
-    } else if (kind === 'beastFeast') {
-      if (selection === 'yes') {
-        const self = game.home.concat(game.threat).find(c => c.def.id === game._pendingSource);
-        const all = game.threat.filter(c => c.def.visitor).slice();
-        for (const v of all) killOne(game, v, self ? self.def.id : null);
-        game._pendingSource = null;
-      }
+      } else if (kind === 'beastFeast') {
+        if (selection === 'yes') {
+          const self = game.home.concat(game.threat).find(c => c.def.id === game._pendingSource);
+          const all = redirectToAbsorber(game, game.threat.filter(c => c.def.visitor).slice());
+          for (const v of all) killOne(game, v, self ? self.def.id : null);
+          if (self) {
+            const bi = self.attachments.findIndex(a => a.def.id === 40);
+            if (bi !== -1) { const beast = self.attachments.splice(bi, 1)[0]; game.discard.push(beast); Logger.discardCard(game, beast, ''); }
+          }
+          game._pendingSource = null;
+        }
     } else if (kind === 'takeFromUnder') {
-      if (selection !== 'no') {
-        const c = game._pendingCard2;
-        if (selection === 'discard') game.discard.push(c);
-        else { const expo = findInPlay(game, 3); if (expo) expo.under.push(c); }
-        if (op && op.discardSelf && game._pendingSelf) {
-          removeFrom(game, game._pendingSelf);
-          game.discard.push(game._pendingSelf);
-          game._pendingSelf = null;
+      const host = game._pendingCard2;
+      if (host && host.under.length > 0) {
+        const c = host.under.shift();
+        if (selection === 'underExpo') {
+          const expo = findInPlay(game, 3);
+          if (expo) expo.under.push(c); else game.discard.push(c); // fallback в сброс без Экспоната
+        } else {
+          game.discard.push(c);
         }
       }
+      if (op && op.discardSelf && game._pendingSelf) {
+        removeFrom(game, game._pendingSelf);
+        game.discard.push(game._pendingSelf);
+        game._pendingSelf = null;
+      }
       game._pendingCard2 = null;
-      } else if (kind === 'discardHome') {
+    } else if (kind === 'discardHome') {
         const c = game.home.find(x => x.def.id === selection);
         if (c) {
           const src = game._pendingDiscardSrc || '';
@@ -1013,7 +1227,7 @@
           game._pendingSelf = null;
         }
       } else if (kind === 'attach') {
-      const target = game.home.find(x => x.def.id === selection);
+      const target = game.home.concat(game.threat).find(x => x.def.id === selection);
       const self = game.home.concat(game.threat).find(c => c.def.id === game._pendingSource);
       if (target && self) { removeFrom(game, self); target.attachments.push(self); if (op.makeEmpty) target.empty = true; }
       game._pendingSource = null;
@@ -1052,15 +1266,15 @@
           if (card) { autoPlace(game, card); if (!game.pending) afterEnter(game); }
         }
       }
-    } else if (kind === 'banshee') {
-      if (selection !== 'no') {
-        const v = game.threat.find(c => c.def.id === selection);
-        if (v) killOne(game, v);
-        const self = game.home.concat(game.threat).find(c => c.def.id === 4);
-        if (self) { removeFrom(game, self); game.deck.push(self); }
-        for (const v of game.threat.filter(c => c.def.visitor).slice()) { removeFrom(game, v); game.deck.push(v); }
-        shuffle(game.deck, game.rng);
-      }
+      } else if (kind === 'banshee') {
+        if (selection !== 'no') {
+          const v = game.threat.find(c => c.def.id === selection);
+          if (v) killOne(game, v);
+          const self = game.home.concat(game.threat).find(c => c.def.id === 4);
+          if (self) { removeFrom(game, self); game.deck.push(self); }
+          for (const v of redirectToAbsorber(game, game.threat.filter(c => c.def.visitor).slice())) { removeFrom(game, v); game.deck.push(v); }
+          shuffle(game.deck, game.rng);
+        }
     } else if (kind === 'competeEffect') {
       const src = selection;
       const rules = game._competeRules || [];
@@ -1091,12 +1305,38 @@
     afterEnter(game);
   }
 
+  // разыграть открытую карту бесплатно и немедленно (эффект комбо, напр. 35 -> 44 «Голоса!»)
+  function autoPlayForFree(game, card, source) {
+    const hadVisitors = killableVisitors(game).length > 0;
+    game.home.push(card); // карта в игре, чтобы найти её правило эффекта
+    const all = (root.RULES || []).concat(root.GAME_RULES || []);
+    const rule = all.find(r => r.event === 'turnStart' && r.source === card.def.id &&
+      findInPlay(game, r.source) &&
+      (!r.where || matchWhere(game, r.where, { source: r.source })));
+    game._freePlay = true;
+    if (rule) runOps(game, rule.do, rule.source, card);
+    game._freePlay = false;
+    // «разыгранная» карта уходит в сброс (если эффект ещё не сбросил её сам)
+    if (findInPlay(game, card.def.id)) { removeFrom(game, card); game.discard.push(card); Logger.discardCard(game, card, ''); }
+    // канон: «Если нет Посетителей — сбросьте обе эти карты»
+    if (!hadVisitors) {
+      const src = source != null ? findInPlay(game, source) : null;
+      if (src) { removeFrom(game, src); game.discard.push(src); Logger.discardCard(game, src, ''); }
+    }
+    if (game.pending) { game.phase = 'enterPending'; return; }
+    afterEnter(game);
+  }
+
   function placeDrawnCard(game, card) {
     const def = card.def;
     Logger.draw(game, card);
-    // autoPlayIfDrawn: разыграть бесплатно
-    if (game._autoPlayIfDrawn && game._autoPlayIfDrawn.indexOf(def.id) !== -1 && !hasArrow(def)) {
-      autoEnter(game, card); return;
+    // autoPlayIfDrawn: разыграть открытую карту бесплатно и немедленно (комбо, напр. 35 -> 44)
+    if (game._autoPlayIfDrawn) {
+      const ap = game._autoPlayIfDrawn.find(e => e.id === def.id);
+      if (ap && !hasArrow(def)) {
+        const srcInPlay = ap.source == null || findInPlay(game, ap.source);
+        if (srcInPlay) { autoPlayForFree(game, card, ap.source); return; }
+      }
     }
     if (hasArrow(def) || (game._freeNext && !hasArrow(def)) || (game._freeIfDrawn && game._freeIfDrawn.indexOf(def.id) !== -1)) {
       game._freeNext = null;
@@ -1110,14 +1350,30 @@
 
   function fireEnter(game, card) {
     const def = card.def;
-    // pre-placement bury для посетителей
     if (isVisitor(def)) {
+      // Хорошее вино (2): следующий Посетитель подкладывается под Ужин (38),
+      // если 38 уже наложена на другого Посетителя
+      if (findInPlay(game, 2) && !card.flags.buried45 && !card.attachments.some(a => a.def.id === 38)) {
+        const host = game.home.concat(game.threat).find(c => c.attachments.some(a => a.def.id === 38));
+        const dinner = host ? host.attachments.find(a => a.def.id === 38) : null;
+        if (dinner) {
+          removeFrom(game, card);
+          dinner.under.push(card);
+          card.flags.wineBuried = true;
+          Logger.bury(game, card, dinner);
+          checkLoss(game);
+          return;
+        }
+      }
       fireEvent(game, 'visitorRevealed', { triggering: card, pre: true });
       if (game._skipVisitorEffects) { game._skipVisitorEffects = false; return; }
+      if (card.flags.stored) { checkLoss(game); return; }
     }
-    // enter самой карты
-    fireEvent(game, 'enter', { sourceId: def.id, triggering: card });
-    // реакции на посетителя (energy и т.п.)
+    // enter самой карты (подавлен, если посетитель похоронен картой 45 или подавлен Пламенем)
+    if (!card.flags.buried45 && !card.flags.ignoreText) {
+      fireEvent(game, 'enter', { sourceId: def.id, triggering: card });
+    }
+    // реакции на посетителя (energy и т.п.) — сохраняются для похороненных (чужие карты 7/34)
     if (isVisitor(def) && !game._skipVisitorEffects) {
       fireEvent(game, 'visitorRevealed', { triggering: card, pre: false });
     }
@@ -1232,11 +1488,31 @@
     game.phase = 'choice';
   }
 
+  // Преданный фанат (1): переместить на последнюю карту Дома и сделать её Пустой
+  function moveFanTo(game) {
+    const fan = findAnywhere(game, 1);
+    if (!fan) return;
+    if (game.home.length === 0) return;
+    const last = game.home[game.home.length - 1];
+    if (last === undefined) return;
+    if (last === fan) return;
+    if (last.attachments.indexOf(fan) !== -1) return; // уже на последней
+    // отцепить от старого хозяина и восстановить его
+    for (const c of game.home.concat(game.threat)) {
+      const i = c.attachments.indexOf(fan);
+      if (i !== -1) { c.attachments.splice(i, 1); c.empty = false; }
+    }
+    removeFrom(game, fan); // вытащить, если фанат остался top-level в зоне
+    last.attachments.push(fan);
+    last.empty = true;
+  }
+
   function autoPlace(game, card) {
     const zone = card.def.placement === 'threat' ? game.threat : game.home;
     zone.push(card);
     Logger.enter(game, card, card.def.placement === 'threat' ? 'threat' : 'home');
     fireEnter(game, card);
+    if (zone === game.home) moveFanTo(game);
     if (game.pending) game.phase = 'enterPending';
   }
 
@@ -1254,7 +1530,7 @@
   }
 
   function computeScore(game) {
-    let s = baseScore(game);
+    let s = baseScore(game) + (game._killScore || 0);
     game._scoreLog = [];
     fireEvent(game, 'gameEnd');
     s += (game._scoreAdd || 0);
@@ -1275,6 +1551,7 @@
         addEnergy(game, -buyCost(game));
         game.home.push(card);
         fireEnter(game, card);
+        moveFanTo(game);
       } else {
         game.discard.push(card);
         Logger.discardCard(game, card, '');
@@ -1304,7 +1581,7 @@
     activateTurnStart, skipTurnStart,
     threatCount, baseScore, computeScore, scoreBreakdown, inPlay, findInPlay, fireEnter,
     mulberry32, shuffle, makeInstance, buyCost,
-    _internal: { fireEvent, runOps, executeOp, killOne, removeFrom, placeDrawnCard, checkLoss, autoPlace, computeArmedTurnStart, probeArmed, cloneGame, sigExcl },
+    _internal: { fireEvent, runOps, executeOp, killOne, removeFrom, placeDrawnCard, checkLoss, autoPlace, computeArmedTurnStart, probeArmed, cloneGame, sigExcl, findAnywhere, findInPlayInclAttach },
   };
 
   if (typeof module !== 'undefined' && module.exports) {

@@ -649,6 +649,11 @@
     }
     else if(p.kind==='beastFeast'){ ovOpt(wrap,'Да — убить всех и захоронить',()=>doChoose('yes')); ovOpt(wrap,'Нет',()=>doChoose('no')); }
     else if(p.kind==='killVisitor'){ if(p.options.indexOf('no')>=0) ovOpt(wrap,'Не активировать (оставить в Доме)',()=>doChoose('no')); }
+    else if(p.kind==='payKeepSelf'){
+      ovOpt(wrap,'Заплатить 1⚡ (оставить в игре)',()=>doChoose('pay'));
+      ovOpt(wrap,'Сбросить',()=>doChoose('discard'));
+      ovOpt(wrap,'Не активировать',()=>doChoose('no'));
+    }
     else if(p.kind==='banshee'){ p.options.filter(id=>id!=='no').forEach(id=>ovOpt(wrap,(CARD_BY_ID[id]?CARD_BY_ID[id].name:id),()=>doChoose(id))); ovOpt(wrap,'Не убивать',()=>doChoose('no')); }
     else if(p.kind==='memoirChoice'){ ovOpt(wrap,'Сбросить и открыть другую',()=>doChoose('discardDraw')); ovOpt(wrap,'Разыграть бесплатно (риск)',()=>doChoose('replay')); }
     else if(p.kind==='takeFromUnder'){ ovOpt(wrap,'Сбросить',()=>doChoose('discard')); ovOpt(wrap,'Под Ужасный экспонат',()=>doChoose('underExpo')); }
